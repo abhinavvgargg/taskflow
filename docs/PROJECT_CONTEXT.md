@@ -25,6 +25,76 @@ Deliberately **not** a CRUD app. The value is in the engineering problems: per-p
 
 **Domain shape:** Organizations (tenants) → Projects → Issues (Epic / Story / Task / Bug → Sub-tasks), with per-project membership and roles, comments, watchers, change history, configurable workflows, and search.
 
+### 2.1 Full feature list
+
+Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after week 12 · ⏸️ deferred (see section 6).
+
+**Identity & access**
+- ✅ Registration with email verification (token-based, expiring, single-use)
+- ✅ Login with access + refresh tokens; refresh rotation, reuse detection, revocation
+- ✅ Logout — single device and all devices
+- ✅ Password reset flow; password change with re-authentication
+- ✅ Account lockout after repeated failed logins, auto-unlock after cooldown
+- ✅ User profile (timezone, basic preferences), login history
+- 🔶 API keys for integrations — scoped, revocable, hashed at rest, last-used tracking
+
+**Organizations (tenants)**
+- ✅ Create organization; creator becomes Owner
+- ✅ Invite members by email with a role; accept/decline; expiring invites (⏸️ actual invite emails — token returned in the response for now)
+- ✅ Org-level roles: Owner, Admin, Member
+- ✅ Member removal, role changes, ownership transfer
+- ✅ Org settings (default workflow)
+- ✅ Tenant data isolation enforced on every query
+- ⏸️ Working days / SLA policy settings
+
+**Projects**
+- ✅ Create project with a unique key (`TF`, `PAY`) used for issue keys like `TF-101`
+- ✅ Project membership and roles: Admin, Developer, Reporter, Viewer
+- ✅ A user can hold different roles in different projects
+- ✅ Project settings: workflow, enabled issue types, default assignee
+- ✅ Archive and restore a project
+- ⏸️ Project-level custom fields
+
+**Issues**
+- ✅ Issue types with different fields: Epic, Story (story points), Task, Bug (severity, steps to reproduce, environment)
+- ✅ Hierarchy: Epic → Story/Task/Bug → Sub-task
+- ✅ Fields: title, description, priority, assignee, reporter, labels, due date, estimate
+- ✅ Assignment rule: only project members can be assigned
+- ✅ Comments with edit/delete rules (authors edit their own; admins delete any)
+- ✅ Watchers and @mentions
+- ✅ Full field-level change history (who, when, from → to)
+- ✅ Soft delete, trash view, restore
+- ✅ Concurrent-edit protection (`@Version` → HTTP 409); duplicate-free issue key generation under load
+- ⏸️ Issue linking (blocks / is-blocked-by / relates-to / duplicates)
+- ⏸️ Bulk operations (bulk assign, bulk status change, bulk move)
+- ⏸️ Attachments with type/size validation
+
+**Workflow engine**
+- ✅ Per-project configurable statuses and allowed transitions
+- ✅ Transition guards: required permission, required fields, required conditions (a Bug needs a resolution to close; a Story needs points to enter a sprint)
+- ✅ Post-transition actions: auto-assign, notify watchers, stamp resolution date
+- ✅ Default workflow templates (Simple, Kanban, Bug) seeded at startup
+- ✅ Invalid transitions rejected with clear, specific errors
+
+**Search & reporting**
+- ✅ Dynamic filtering on any combination of fields, with pagination and stable sorting
+- ✅ Full-text-ish search on title and description
+- ✅ Basic aggregates: issues by status / assignee / priority, overdue issues
+- ⏸️ Saved filters (private/shared), dashboards, sprint & velocity reports, cycle/lead time, CSV export
+
+**Notifications**
+- ✅ In-app notifications: assigned to you, mentioned, status changed, comment on a watched issue
+- ✅ Email sending with a dev (log-only) and prod (SMTP) implementation
+- ⏸️ Per-user preferences per event type, digest/batch mode
+
+**Sprints & SLA** — ⏸️ entirely deferred (sprint create/start/complete rules, backlog & board, velocity, burndown, SLA policies with business-hours calculation, pause in BLOCKED, breach detection and escalation). One representative `@Scheduled` job is still built in Phase 9 (e.g. auto-close stale issues / invite cleanup) so the scheduling concepts are covered.
+
+**Platform & operations**
+- ✅ Health checks, Micrometer metrics, structured JSON logs with correlation IDs
+- ✅ OpenAPI docs, consistent error model, audit log of security-sensitive actions
+- ✅ Docker + Compose, CI pipeline
+- 🔶 Rate limiting per user and per API key, idempotent handling of unsafe operations, API versioning
+
 ---
 
 ## 3. Working agreement (how the new chat must operate)

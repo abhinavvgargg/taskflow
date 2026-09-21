@@ -1,6 +1,6 @@
 # Phase 0 — Foundations (Requirements)
 
-> Companion to `PROJECT_CONTEXT.md`. Requirements only — no code. Tick the checklist as you go.
+> Companion to `../PROJECT_CONTEXT.md`. Requirements only — no code. Tick the checklist as you go.
 > **Time-box: 6–7h. Hard stop at 10h (150%).** Whatever isn't done carries into Phase 1 as a side task; the phase does not extend.
 
 **The goal of Phase 0 is not features.** By the end, one trivial endpoint goes through the whole stack — validated request → service → JPA → Postgres via a Flyway-managed schema → paginated response, with a correlation ID in the logs, a documented error contract, and a Testcontainers test that proves it. Every later phase then adds business logic into a skeleton that is already production-shaped.
@@ -56,7 +56,7 @@ start.spring.io rejects anything below 4.0.0 (`"Spring Boot compatibility range 
 
 ## 0.1 — Repo & project skeleton (~45 min)
 
-- [x] `git init` at `~/IdeaProjects/taskflow` (it is not a repo yet). `.gitignore` covering `target/`, IDE files, `.env`, `.DS_Store`.
+- [x] `git init` at `~/IdeaProjects/taskflow` (it is not a repo yet). `../../.gitignore` covering `target/`, IDE files, `.env`, `.DS_Store`.
 - [x] Java 21 pinned via the build's toolchain — not "whatever JDK is on PATH".
 - [x] Base package `com.<yourname>.taskflow`. **Package-by-feature**, not by layer:
 
@@ -80,7 +80,7 @@ taskflow/
 
 ## 0.2 — Postgres via Docker Compose (~30 min)
 
-- [x] `compose.yaml` at repo root: Postgres 17, named volume for data, a **healthcheck** (`pg_isready`), credentials from env with no production-usable defaults.
+- [x] `../../compose.yaml` at repo root: Postgres 17, named volume for data, a **healthcheck** (`pg_isready`), credentials from env with no production-usable defaults.
 - [x] `.env.example` committed with every variable and dummy values. Real `.env` gitignored.
 - [ ] Healthcheck-gated startup: the app must not boot against a Postgres that is still initialising.
 
@@ -128,12 +128,12 @@ taskflow/
 
 ## 0.5 — `BaseEntity` & JPA auditing (~45 min)
 
-- [ ] `BaseEntity` as a `@MappedSuperclass` in `common/persistence`: id, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`. Audit fields not settable from outside — no public setters.
-- [ ] JPA auditing enabled (`@EnableJpaAuditing` + `AuditingEntityListener` reaching the entity). An `AuditorAware` returning a fixed `"system"` for now, with `Optional.empty()` handling defined — Phase 1 swaps in the authenticated user with a one-line change.
-- [ ] 💡 **Concept — `@MappedSuperclass` vs `@Embeddable` vs `@Inheritance`:** `@MappedSuperclass` shares *mapping* with no table and no polymorphic queries; `@Embeddable` groups columns into a value object reusable as a field; `@Inheritance` creates a queryable type hierarchy with real table-strategy cost. You want the first here; you meet the third properly in Phase 5.
-- [ ] ⚠️ **Trap — do not add `equals`/`hashCode` yet, and do not let the IDE generate them.** Generated-ID entities break the `hashCode` contract the moment a transient entity gets an ID after being added to a `HashSet`. Phase 5 covers this properly. Today the requirement is: none, deliberately.
-- [ ] 🏗️ **`@Version` in `BaseEntity`?** Recommended: **no** — put it on specific entities in Phase 5 where you have decided optimistic locking is right. Blanket versioning makes lookup/audit tables throw `OptimisticLockException` for reasons nobody expects. Your call, justify it.
-- [ ] The `organization` entity extends `BaseEntity`. Repository is a plain Spring Data interface — no custom methods needed yet.
+- [x] `BaseEntity` as a `@MappedSuperclass` in `common/persistence`: id, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`. Audit fields not settable from outside — no public setters.
+- [x] JPA auditing enabled (`@EnableJpaAuditing` + `AuditingEntityListener` reaching the entity). An `AuditorAware` returning a fixed `"system"` for now, with `Optional.empty()` handling defined — Phase 1 swaps in the authenticated user with a one-line change.
+- [x] 💡 **Concept — `@MappedSuperclass` vs `@Embeddable` vs `@Inheritance`:** `@MappedSuperclass` shares *mapping* with no table and no polymorphic queries; `@Embeddable` groups columns into a value object reusable as a field; `@Inheritance` creates a queryable type hierarchy with real table-strategy cost. You want the first here; you meet the third properly in Phase 5.
+- [x] ⚠️ **Trap — do not add `equals`/`hashCode` yet, and do not let the IDE generate them.** Generated-ID entities break the `hashCode` contract the moment a transient entity gets an ID after being added to a `HashSet`. Phase 5 covers this properly. Today the requirement is: none, deliberately.
+- [x] 🏗️ **`@Version` in `BaseEntity`?** Recommended: **no** — put it on specific entities in Phase 5 where you have decided optimistic locking is right. Blanket versioning makes lookup/audit tables throw `OptimisticLockException` for reasons nobody expects. Your call, justify it.
+- [x] The `organization` entity extends `BaseEntity`. Repository is a plain Spring Data interface — no custom methods needed yet.
 
 ---
 
