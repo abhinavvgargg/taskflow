@@ -16,7 +16,7 @@
 | 1 | Build tool | **Maven** 3.9.16 | Standard in enterprise Spring shops; what a take-home hands you. |
 | 2 | Boot version | **3.5.16** | Matches every tutorial/blog you'll read for 12 weeks; what the job market runs. |
 | 3 | Lombok | **Full, but never on entities** | `@Slf4j` + `@RequiredArgsConstructor` only; `@Data`/`@ToString`/`@Builder`/`@EqualsAndHashCode` banned on JPA entities. |
-| 4 | Primary key strategy | _open — sequence vs UUIDv7_ | |
+| 4 | Primary key strategy | **bigint + sequence**, pooled (`increment by 50`) | Batch-insert friendly, 8-byte FKs, perfect index locality; adding an opaque public ID later is cheap, changing the PK type is not. |
 | 5 | Phase 0 vertical slice | **`organizations`** (id, name, slug + audit) | Real table you keep; zero throwaway code. |
 | 6 | Java version | **21** (Homebrew `openjdk@21`) | Plan + resume say 21; avoids stacking Lombok/Boot/JDK bleeding edges. |
 
@@ -110,17 +110,17 @@ taskflow/
 ## 0.4 — Flyway & schema conventions (~1h)
 
 - [ ] Flyway enabled, migrations in `db/migration`, naming `V1__create_organizations.sql`.
-- [ ] `spring.flyway.clean-disabled=true` — non-negotiable in every profile. One misconfigured CI job with clean enabled drops production.
-- [ ] `V1` creates `organizations`:
-  - [ ] Surrogate PK per decision #4.
-  - [ ] `name` — `varchar`, NOT NULL, length limit chosen deliberately (not 255-because-default).
-  - [ ] `slug` — NOT NULL, **UNIQUE**, lowercase, with a `CHECK` constraint on the allowed character pattern.
-  - [ ] Audit columns `created_at`, `updated_at` as **`timestamptz`**, NOT NULL; `created_by`, `updated_by`.
-- [ ] 💡 **Concept — `timestamptz` vs `timestamp`:** `timestamp` has no zone and silently means "whatever the server thought". `timestamptz` stores an absolute instant. Store UTC, convert at the edge. Getting this wrong is invisible until you have users in a second timezone, and then it is unfixable without a data migration.
-- [ ] **Every constraint gets an explicit name**: `pk_organizations`, `uk_organizations_slug`, `ck_organizations_slug_format`. Why (this is the payoff): when Postgres throws a unique violation, the constraint *name* is the only reliable thing in the exception — you will map `uk_organizations_slug` → error code `ORGANIZATION_SLUG_TAKEN` → HTTP 409. Auto-generated names make that mapping fragile.
+- [x] `spring.flyway.clean-disabled=true` — non-negotiable in every profile. One misconfigured CI job with clean enabled drops production.
+- [x] `V1` creates `organizations`:
+  - [x] Surrogate PK per decision #4.
+  - [x] `name` — `varchar`, NOT NULL, length limit chosen deliberately (not 255-because-default).
+  - [x] `slug` — NOT NULL, **UNIQUE**, lowercase, with a `CHECK` constraint on the allowed character pattern.
+  - [x] Audit columns `created_at`, `updated_at` as **`timestamptz`**, NOT NULL; `created_by`, `updated_by`.
+- [x] 💡 **Concept — `timestamptz` vs `timestamp`:** `timestamp` has no zone and silently means "whatever the server thought". `timestamptz` stores an absolute instant. Store UTC, convert at the edge. Getting this wrong is invisible until you have users in a second timezone, and then it is unfixable without a data migration.
+- [x] **Every constraint gets an explicit name**: `pk_organizations`, `uk_organizations_slug`, `ck_organizations_slug_format`. Why (this is the payoff): when Postgres throws a unique violation, the constraint *name* is the only reliable thing in the exception — you will map `uk_organizations_slug` → error code `ORGANIZATION_SLUG_TAKEN` → HTTP 409. Auto-generated names make that mapping fragile.
 - [ ] Conventions written into the README and never broken: `snake_case`, plural table names, singular column names, `id` as PK, `<table>_id` for FKs, prefixes `pk_ uk_ fk_ ix_ ck_`.
-- [ ] **Rule: an applied migration is immutable.** Fix forward with `V2`. Flyway checksums enforce this; understand what a checksum mismatch means before you hit it at 11pm.
-- [ ] ⚠️ **Trap:** letting Hibernate create the schema "just for now" in dev. The moment dev and migration diverge, `validate` catches it — which is why `validate` is required above.
+- [x] **Rule: an applied migration is immutable.** Fix forward with `V2`. Flyway checksums enforce this; understand what a checksum mismatch means before you hit it at 11pm.
+- [x] ⚠️ **Trap:** letting Hibernate create the schema "just for now" in dev. The moment dev and migration diverge, `validate` catches it — which is why `validate` is required above.
 
 🎯 **Interview question:** "Why Flyway over `ddl-auto=update`?" Needs *three* reasons: reviewability/versioning, no data-destructive guesses, and the fact that `update` never drops or narrows anything, so prod slowly diverges from your code.
 
