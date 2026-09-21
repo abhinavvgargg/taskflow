@@ -17,8 +17,11 @@
 | 6 | Java | 21 (Homebrew `openjdk@21`) | Plan and resume say 21; avoids stacking Lombok + Boot + JDK bleeding edges. |
 | 7 | `id` location | In `BaseEntity`, one shared sequence | Less repetition. Trade-off: all tables share a number space. Per-table sequences would need `id` in each entity. |
 | 8 | Config format | YAML | Nesting across three profiles; `.properties` repeats the prefix every line. |
+| 9 | What `created_by` holds | **Username**, not email | A stable identifier survives a user changing their email; also keeps `varchar(50)` viable with no `V2`. |
 
-**Still open:** whether audit `created_by` becomes an FK to `users` (Phase 1), and whether organizations get an opaque public ID for URLs.
+**Still open:** whether audit `created_by` becomes an FK to `users` (Phase 1 — currently a plain string, which survives user deletion), and whether organizations get an opaque public ID for URLs.
+
+**Note:** `slug` on `organizations` is our design decision, not a stated requirement — `PROJECT_CONTEXT.md` §2.1 gives *projects* a key (`TF`) but says nothing about an org identifier. Be ready to justify it.
 
 ---
 
@@ -243,4 +246,4 @@ That last pair is the best story in the set: one shows what schema validation gu
 
 **Left:** §0.6 web contracts and the first insert · §0.7 error handling · §0.8 correlation ID + logging · §0.9 OpenAPI + Actuator (**trim candidate**) · §0.10 testing baseline
 
-**Carried debt:** README not written (holds the API and DB naming conventions) · `--debug` auto-config report not yet read · `@NoArgsConstructor` still public on `Organization` · `created_by varchar(50)` may be too short if Phase 1 audits by email.
+**Carried debt:** README not written (holds the API and DB naming conventions) · `--debug` auto-config report not yet read · `@NoArgsConstructor` still public on `Organization`.
