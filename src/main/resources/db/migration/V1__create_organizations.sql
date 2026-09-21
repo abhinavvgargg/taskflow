@@ -1,4 +1,4 @@
-create sequence organizations_id_seq start with 1 increment by 50;
+create sequence global_id_seq start with 1 increment by 50;
 
 create table organizations (
     id bigint not null,
