@@ -56,9 +56,9 @@ start.spring.io rejects anything below 4.0.0 (`"Spring Boot compatibility range 
 
 ## 0.1 — Repo & project skeleton (~45 min)
 
-- [ ] `git init` at `~/IdeaProjects/taskflow` (it is not a repo yet). `.gitignore` covering `target/`, IDE files, `.env`, `.DS_Store`.
-- [ ] Java 21 pinned via the build's toolchain — not "whatever JDK is on PATH".
-- [ ] Base package `com.<yourname>.taskflow`. **Package-by-feature**, not by layer:
+- [x] `git init` at `~/IdeaProjects/taskflow` (it is not a repo yet). `.gitignore` covering `target/`, IDE files, `.env`, `.DS_Store`.
+- [x] Java 21 pinned via the build's toolchain — not "whatever JDK is on PATH".
+- [x] Base package `com.<yourname>.taskflow`. **Package-by-feature**, not by layer:
 
 ```
 taskflow/
@@ -70,8 +70,8 @@ taskflow/
 
 - [ ] **Rule enforced by hand:** a feature package never imports from another feature package. Shared things move to `common/`. Why: this makes a Phase 3 `organization` → Phase 5 `issue` dependency visible instead of accidental.
 - [ ] ⚠️ **Trap:** the tutorial layout (`controller/`, `service/`, `repository/`, `model/`). Tidy at 5 classes; at 50 it is four packages you edit for every single change. You will be asked why you chose your layout.
-- [ ] Dependencies for Phase 0 **only**: web, validation, data-jpa, flyway-core + flyway-database-postgresql, postgresql driver, actuator, springdoc-openapi-starter-webmvc-ui; test scope: spring-boot-starter-test, testcontainers (postgresql + junit-jupiter), spring-boot-testcontainers.
-- [ ] **No security starter yet** — adding it now silently locks every endpoint and costs you a confused hour. That is Phase 1.
+- [x] Dependencies for Phase 0 **only**: web, validation, data-jpa, flyway-core + flyway-database-postgresql, postgresql driver, actuator, springdoc-openapi-starter-webmvc-ui; test scope: spring-boot-starter-test, testcontainers (postgresql + junit-jupiter), spring-boot-testcontainers.
+- [x] **No security starter yet** — adding it now silently locks every endpoint and costs you a confused hour. That is Phase 1.
 - [ ] README exists from commit #1: what TaskFlow is, the stack, how to run. Two paragraphs is enough today.
 
 **Done when:** the build passes and the app starts.
