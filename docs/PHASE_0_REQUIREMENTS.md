@@ -80,8 +80,8 @@ taskflow/
 
 ## 0.2 — Postgres via Docker Compose (~30 min)
 
-- [ ] `compose.yaml` at repo root: Postgres 17, named volume for data, a **healthcheck** (`pg_isready`), credentials from env with no production-usable defaults.
-- [ ] `.env.example` committed with every variable and dummy values. Real `.env` gitignored.
+- [x] `compose.yaml` at repo root: Postgres 17, named volume for data, a **healthcheck** (`pg_isready`), credentials from env with no production-usable defaults.
+- [x] `.env.example` committed with every variable and dummy values. Real `.env` gitignored.
 - [ ] Healthcheck-gated startup: the app must not boot against a Postgres that is still initialising.
 
 💡 **Concept — `spring-boot-docker-compose`:** Boot 3.1+ can start your compose file on run and *derive* the datasource URL and credentials from the running container, so `application-dev.yml` needs no JDBC URL at all. **Buys:** nobody can run the app against the wrong database; dev setup is clone-and-run. **Costs:** the connection config becomes invisible, which is confusing while learning.
@@ -93,14 +93,14 @@ taskflow/
 
 ## 0.3 — Profiles & typed configuration (~1h)
 
-- [ ] Three profiles: `dev`, `test`, `prod`. `application.yml` holds only what is identical everywhere; the rest in `application-{profile}.yml`.
-- [ ] **`spring.jpa.open-in-view=false`** in the base `application.yml`. Day one, as agreed.
-- [ ] **`spring.jpa.hibernate.ddl-auto=validate`** in dev and prod. Never `update`. `validate` fails startup when an entity and a migration disagree — catching "I added a field and forgot the migration" in CI rather than at runtime.
-- [ ] `spring.jpa.show-sql=false`; use `logging.level.org.hibernate.SQL=DEBUG` plus binder logging in dev. Why: `show-sql` writes to stdout unformatted, bypassing your logging config entirely — so it would bypass your JSON logs and correlation IDs too.
-- [ ] **`prod` has no hardcoded secrets and no defaults for them.** A missing `DB_PASSWORD` must fail startup, not fall back.
+- [x] Three profiles: `dev`, `test`, `prod`. `application.yml` holds only what is identical everywhere; the rest in `application-{profile}.yml`.
+- [x] **`spring.jpa.open-in-view=false`** in the base `application.yml`. Day one, as agreed.
+- [x] **`spring.jpa.hibernate.ddl-auto=validate`** in dev and prod. Never `update`. `validate` fails startup when an entity and a migration disagree — catching "I added a field and forgot the migration" in CI rather than at runtime.
+- [x] `spring.jpa.show-sql=false`; use `logging.level.org.hibernate.SQL=DEBUG` plus binder logging in dev. Why: `show-sql` writes to stdout unformatted, bypassing your logging config entirely — so it would bypass your JSON logs and correlation IDs too.
+- [x] **`prod` has no hardcoded secrets and no defaults for them.** A missing `DB_PASSWORD` must fail startup, not fall back.
 - [ ] One `@ConfigurationProperties` class: `taskflow.api` with `default-page-size` and `max-page-size` at minimum. Constructor-bound record, registered via `@ConfigurationPropertiesScan` or `@EnableConfigurationProperties`, annotated `@Validated`, fields carrying `@Min`/`@Max`/`@NotBlank`.
-- [ ] ⚠️ **Trap — create this bug on purpose, then read the error:** set `max-page-size: 0` and start the app. You should get a startup failure naming the property, the invalid value, and the violated constraint. **Feel that failure once** — it is the entire argument for typed config over `@Value`, and you will repeat it in an interview from memory.
-- [ ] HikariCP `maximum-pool-size` set explicitly per profile rather than taking the default 10. 💡 Pool sizing is a real interview topic — bigger is not faster; the pool should be small and the queue should do the waiting.
+- [x] ⚠️ **Trap — create this bug on purpose, then read the error:** set `max-page-size: 0` and start the app. You should get a startup failure naming the property, the invalid value, and the violated constraint. **Feel that failure once** — it is the entire argument for typed config over `@Value`, and you will repeat it in an interview from memory.
+- [x] HikariCP `maximum-pool-size` set explicitly per profile rather than taking the default 10. 💡 Pool sizing is a real interview topic — bigger is not faster; the pool should be small and the queue should do the waiting.
 - [ ] 🔍 **Look inside:** run once with `--debug`, find `JpaBaseConfiguration`, and identify which `@ConditionalOnMissingBean` would let you replace the `EntityManagerFactory`.
 
 🎯 **Interview question:** "How does Spring Boot decide which auto-configurations to apply, and how would you override one?"
