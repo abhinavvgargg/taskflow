@@ -7,3 +7,7 @@ spring:
       maximum-pool-size: 5
 
 # No hibernate logging in PROD
+logging:
+  structured:
+    format:
+      console: ecs

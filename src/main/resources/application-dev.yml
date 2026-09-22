@@ -10,3 +10,5 @@ logging:
   level:
     org.hibernate.SQL: DEBUG
     org.hibernate.orm.jdbc.bind: TRACE
+  pattern:
+    correlation: "[%X{correlationId:-}] "

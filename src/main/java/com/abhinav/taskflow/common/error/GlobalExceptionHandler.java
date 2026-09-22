@@ -1,13 +1,11 @@
 package com.abhinav.taskflow.common.error;
 
-import jakarta.servlet.http.HttpServletRequest;
+import com.abhinav.taskflow.common.logging.CorrelationIdFilter;
 import lombok.extern.slf4j.Slf4j;
 import org.hibernate.exception.ConstraintViolationException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
-import org.springframework.lang.Nullable;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -20,6 +18,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @RestControllerAdvice
@@ -85,6 +84,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             if (problemDetail.getInstance() == null) {
                 problemDetail.setInstance(URI.create(pathOf(request)));
             }
+            Optional.ofNullable(MDC.get(CorrelationIdFilter.MDC_KEY)).ifPresent(id -> problemDetail.setProperty("correlationId", id));
         }
         return response;
     }
