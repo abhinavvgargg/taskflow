@@ -1,8 +1,8 @@
 package com.abhinav.taskflow.common.error;
 
-public class ResourceNotFoundException extends RuntimeException {
+public class ResourceNotFoundException extends ApplicationException {
 
-    public ResourceNotFoundException(String resource, Long id) {
-        super(resource + " with id " + id + " was not found.");
+    public ResourceNotFoundException(ErrorCode errorCode, String detail) {
+        super(errorCode, detail);
     }
 }

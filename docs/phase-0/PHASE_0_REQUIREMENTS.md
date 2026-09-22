@@ -140,19 +140,19 @@ taskflow/
 ## 0.6 — Web layer contracts (~1h)
 
 - [ ] Endpoints: `POST /api/v1/organizations` (201 + `Location`), `GET /api/v1/organizations/{id}` (200/404), `GET /api/v1/organizations` (paginated).
-- [ ] **DTOs are records**, request and response separate types. Entities never appear in a controller signature — not as parameter, not as return type.
-- [ ] **Controllers do HTTP only:** bind, validate, delegate, map status. No repository access, no `@Transactional`, no business rules. Services own transactions — `readOnly = true` on queries.
-- [ ] Validation at the boundary with `@Valid`; constraints on the record components. Business rules (slug uniqueness) in the **service**; the DB unique constraint is the third guard. Be able to name what each layer catches that the others do not — *the boundary catches malformed input cheaply, the service enforces rules needing DB state, the constraint catches the race between check and insert.*
-- [ ] **Pagination envelope:** `PageResponse<T>` in `common/web` — content, page, size, totalElements, totalPages.
-- [ ] ⚠️ **Trap:** returning Spring Data's `Page`/`PageImpl` straight out of a controller. Its JSON is a serialisation of an internal class, is not a stable contract, and Spring Data explicitly warns about it. You would be locked into Spring Data's shape forever.
-- [ ] **Cap the page size** using `taskflow.api.max-page-size` — a client asking for `size=100000` gets clamped, not an OOM.
-- [ ] **Stable sort is mandatory:** every paginated query ends with a deterministic tiebreaker (e.g. `id`).
+- [x] **DTOs are records**, request and response separate types. Entities never appear in a controller signature — not as parameter, not as return type.
+- [x] **Controllers do HTTP only:** bind, validate, delegate, map status. No repository access, no `@Transactional`, no business rules. Services own transactions — `readOnly = true` on queries.
+- [x] Validation at the boundary with `@Valid`; constraints on the record components. Business rules (slug uniqueness) in the **service**; the DB unique constraint is the third guard. Be able to name what each layer catches that the others do not — *the boundary catches malformed input cheaply, the service enforces rules needing DB state, the constraint catches the race between check and insert.*
+- [x] **Pagination envelope:** `PageResponse<T>` in `common/web` — content, page, size, totalElements, totalPages.
+- [x] ⚠️ **Trap:** returning Spring Data's `Page`/`PageImpl` straight out of a controller. Its JSON is a serialisation of an internal class, is not a stable contract, and Spring Data explicitly warns about it. You would be locked into Spring Data's shape forever.
+- [x] **Cap the page size** using `taskflow.api.max-page-size` — a client asking for `size=100000` gets clamped, not an OOM.
+- [x] **Stable sort is mandatory:** every paginated query ends with a deterministic tiebreaker (e.g. `id`).
 - [ ] ⚠️ **Trap:** sorting by `createdAt` alone. Rows with equal timestamps have no defined order, so page 2 can repeat or skip rows page 1 already showed. Silent, intermittent, and a great interview story.
 - [ ] API conventions in the README: plural nouns, no verbs in paths, `/api/v1` from day one, 201+`Location` on create, 204 on delete.
 
 📊 **Measure it:** with `logging.level.org.hibernate.SQL=DEBUG`, hit `GET /api/v1/organizations` and **count the SQL statements**. Expect exactly two (count + page). Write the number down — it is the Phase 8 baseline.
 
-**Measured baseline:** `____ queries for GET /api/v1/organizations`
+**Measured baseline:** **2 queries** for `GET /api/v1/organizations` — one `select … limit ? offset ?`, one `select count(o1_0.id)`. (2026-09-22)
 
 ---
 

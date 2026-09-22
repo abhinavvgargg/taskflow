@@ -1,5 +1,6 @@
 package com.abhinav.taskflow.organization;
 
+import com.abhinav.taskflow.common.error.ResourceConflictException;
 import com.abhinav.taskflow.common.error.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,7 +21,7 @@ public class OrganizationService {
     {
         if (organizationRepository.existsOrganizationBySlug(organizationRequestDto.slug()))
         {
-            throw new DuplicateSlugException("Organization already exists");
+            throw new ResourceConflictException(OrganizationErrorCode.DUPLICATE_SLUG, "Organization with slug %s already exists".formatted(organizationRequestDto.slug())).with("slug", organizationRequestDto.slug());
         }
         Organization organization = organizationRepository.save(orgRequestToOrgMapper(organizationRequestDto));
         return OrganizationResponseDto.from(organization);
@@ -29,7 +30,7 @@ public class OrganizationService {
     @Transactional(readOnly = true)
     public OrganizationResponseDto findOrganizationById (Long id)
     {
-        Organization organization = organizationRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException("Organization", id));
+        Organization organization = organizationRepository.findById(id).orElseThrow(() -> new ResourceNotFoundException(OrganizationErrorCode.ORGANIZATION_NOT_FOUND, "No organization found with id %d".formatted(id)).with("id", id));
         return OrganizationResponseDto.from(organization);
     }
 

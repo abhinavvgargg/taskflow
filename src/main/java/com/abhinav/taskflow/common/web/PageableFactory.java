@@ -1,6 +1,7 @@
 package com.abhinav.taskflow.common.web;
 
 import com.abhinav.taskflow.common.config.ApiProperties;
+import com.abhinav.taskflow.common.error.CommonErrorCode;
 import com.abhinav.taskflow.common.error.InvalidSortException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
@@ -38,7 +39,7 @@ public class PageableFactory {
         for (Sort.Order order : sort)
         {
             if (!allowedSortFields.contains(order.getProperty())) {
-                throw new InvalidSortException(order.getProperty() + " is not allowed");
+                throw new InvalidSortException(CommonErrorCode.INVALID_SORT_PROPERTY, order.getProperty() + " is not allowed").with("property", order.getProperty());
             }
         }
         return sort;
