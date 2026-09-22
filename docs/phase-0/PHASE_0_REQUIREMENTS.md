@@ -210,16 +210,16 @@ The highest-leverage hour in Phase 0. Every later phase just registers exception
 
 ## 0.8 — Correlation ID & structured logging (~1h)
 
-- [ ] A `OncePerRequestFilter` that: reads `X-Correlation-Id` or generates one; **validates** the incoming value (length cap, character whitelist) before using it; puts it in SLF4J **MDC**; echoes it on the response header; **clears the MDC in a `finally` block**.
-- [ ] ⚠️ **Trap — the `finally` is not optional.** Tomcat pools threads. An MDC value you do not clear stays attached to that thread and is stamped onto the *next, unrelated* request's logs — you would debug with actively wrong evidence. The same thread-reuse mechanic bites again with `ThreadLocal` in Phase 3.
-- [ ] ⚠️ **Trap — never trust a client-supplied header unvalidated.** An unbounded correlation ID is a log-injection / log-flooding vector; newlines in it can forge fake log lines.
-- [ ] 💡 **Why `OncePerRequestFilter` and not a plain `Filter`:** a plain filter can run multiple times per request on an internal `FORWARD`/`ERROR` dispatch — two IDs for one request. `OncePerRequestFilter` guards against that with a request attribute.
-- [ ] **Order at high precedence** so it wraps security and error dispatch. Know whether you registered via `@Component` + `@Order` or a `FilterRegistrationBean` (explicit order, plus URL scoping).
-- [ ] 💡 **Filter vs interceptor, decided concretely** — write down *why this one had to be a filter*: an interceptor never runs if security rejects the request, so your 401s and 403s would have no correlation ID — exactly the responses you most need to trace.
-- [ ] Logging config: human-readable pattern including `%X{correlationId}` in `dev`; **JSON in `prod`**.
-- [ ] 💡 Boot 3.4+ ships **native structured logging** (`logging.structured.format.console=ecs`, or `gelf`/`logstash`) — no logstash-encoder dependency needed. Most tutorials predate this; note it.
-- [ ] One request-completion log line per request: method, path, status, duration ms. **No bodies, no headers, no query strings containing tokens, no PII.**
-- [ ] All log statements use **parameterised SLF4J** (`log.debug("Found {} orgs", count)`), never concatenation. Concatenation builds the string even when the level is disabled, and breaks structured-log field extraction.
+- [x] A `OncePerRequestFilter` that: reads `X-Correlation-Id` or generates one; **validates** the incoming value (length cap, character whitelist) before using it; puts it in SLF4J **MDC**; echoes it on the response header; **clears the MDC in a `finally` block**.
+- [x] ⚠️ **Trap — the `finally` is not optional.** Tomcat pools threads. An MDC value you do not clear stays attached to that thread and is stamped onto the *next, unrelated* request's logs — you would debug with actively wrong evidence. The same thread-reuse mechanic bites again with `ThreadLocal` in Phase 3.
+- [x] ⚠️ **Trap — never trust a client-supplied header unvalidated.** An unbounded correlation ID is a log-injection / log-flooding vector; newlines in it can forge fake log lines.
+- [x] 💡 **Why `OncePerRequestFilter` and not a plain `Filter`:** a plain filter can run multiple times per request on an internal `FORWARD`/`ERROR` dispatch — two IDs for one request. `OncePerRequestFilter` guards against that with a request attribute.
+- [x] **Order at high precedence** so it wraps security and error dispatch. Know whether you registered via `@Component` + `@Order` or a `FilterRegistrationBean` (explicit order, plus URL scoping).
+- [x] 💡 **Filter vs interceptor, decided concretely** — write down *why this one had to be a filter*: an interceptor never runs if security rejects the request, so your 401s and 403s would have no correlation ID — exactly the responses you most need to trace.
+- [x] Logging config: human-readable pattern including `%X{correlationId}` in `dev`; **JSON in `prod`**.
+- [x] 💡 Boot 3.4+ ships **native structured logging** (`logging.structured.format.console=ecs`, or `gelf`/`logstash`) — no logstash-encoder dependency needed. Most tutorials predate this; note it.
+- [x] One request-completion log line per request: method, path, status, duration ms. **No bodies, no headers, no query strings containing tokens, no PII.**
+- [x] All log statements use **parameterised SLF4J** (`log.debug("Found {} orgs", count)`), never concatenation. Concatenation builds the string even when the level is disabled, and breaks structured-log field extraction.
 
 🎯 **Interview question:** "A user reports a failed request at 14:32. Walk me through how you find it in the logs."
 

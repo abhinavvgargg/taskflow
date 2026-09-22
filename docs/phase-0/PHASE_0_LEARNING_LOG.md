@@ -1,249 +1,307 @@
-# Phase 0 — Learning Log
+# Phase 0 — Revision & Learning Log (§0.1 – §0.8)
 
-> Everything covered while building §0.1–§0.5 (2026-09-21). Concepts, traps, decisions and answers.
-> Companion to `PHASE_0_REQUIREMENTS.md` (what to build) and `PROJECT_CONTEXT.md` (the plan).
+> Written 2026-09-22, covering everything built and learned from the empty repo through structured logging.
+> Companions: `PHASE_0_REQUIREMENTS.md` (what to build) · `../PROJECT_CONTEXT.md` (the 12-week plan).
 
 ---
 
-## 1. Decisions made, and why
+## 0. Decisions on record
 
 | # | Decision | Chosen | The one-line justification |
 |---|---|---|---|
 | 1 | Build tool | Maven 3.9.16 | Standard in enterprise Spring shops; what a take-home hands you. |
-| 2 | Boot version | 3.5.16 | Matches the tutorials and the job market. Initializr no longer offers it — generate with Boot 4, downgrade the pom. |
-| 3 | Lombok | Full, **never on entities** | `@Slf4j` + `@RequiredArgsConstructor` only. |
-| 4 | Primary key | `bigint` + sequence, `global_id_seq`, `increment by 50` | 8-byte FKs, batch-insert friendly, perfect index locality; adding an opaque public ID later is cheap, changing PK type is not. |
-| 5 | Phase 0 slice | `organizations` | A real table you keep; zero throwaway code. |
+| 2 | Boot version | 3.5.16 | Matches the tutorials and the job market. Initializr no longer offers it. |
+| 3 | Lombok | Full, **never on entities** | `@Slf4j` + `@RequiredArgsConstructor` in practice. |
+| 4 | Primary key | `bigint` + `global_id_seq`, `increment by 50` | 8-byte FKs, batch-insert friendly, index locality. Adding an opaque public ID later is cheap; changing the PK type is not. |
+| 5 | Phase 0 slice | `organizations` | A real table kept for good; zero throwaway code. |
 | 6 | Java | 21 (Homebrew `openjdk@21`) | Plan and resume say 21; avoids stacking Lombok + Boot + JDK bleeding edges. |
-| 7 | `id` location | In `BaseEntity`, one shared sequence | Less repetition. Trade-off: all tables share a number space. Per-table sequences would need `id` in each entity. |
-| 8 | Config format | YAML | Nesting across three profiles; `.properties` repeats the prefix every line. |
-| 9 | What `created_by` holds | **Username**, not email | A stable identifier survives a user changing their email; also keeps `varchar(50)` viable with no `V2`. |
+| 7 | `id` location | `BaseEntity`, one shared sequence | Less repetition. Trade-off: all tables share one number space. |
+| 8 | Config format | YAML | Nesting across three profiles. |
+| 9 | `created_by` holds | **Username**, not email | Stable identifier survives an email change; keeps `varchar(50)` viable. |
+| 10 | Slug source | Client-supplied | Deriving needs slugify *and* collision handling; this makes the 409 a real case. |
+| 11 | Entity→DTO mapping | Static factory on the response record | Right size at one entity. No MapStruct in Phase 0. |
+| 12 | `Pageable` construction | By hand from `ApiProperties` | One source of truth for API config rather than Spring's built-in resolver. |
+| 13 | Error codes | `ErrorCode` interface in `common`, enums per feature | Keeps `common` from importing features. |
 
-**Still open:** whether audit `created_by` becomes an FK to `users` (Phase 1 — currently a plain string, which survives user deletion), and whether organizations get an opaque public ID for URLs.
-
-**Note:** `slug` on `organizations` is our design decision, not a stated requirement — `PROJECT_CONTEXT.md` §2.1 gives *projects* a key (`TF`) but says nothing about an org identifier. Be ready to justify it.
+**Ours, not from the spec:** `slug` on `organizations`. `PROJECT_CONTEXT.md` §2.1 gives *projects* a key (`TF`) but says nothing about an org identifier. Be ready to justify it.
 
 ---
 
-## 2. Concepts — grouped the way interviews ask
+## 1. What we covered
 
-### Spring Boot internals
-
-**Auto-configuration.** Boot ships hundreds of `@AutoConfiguration` classes listed in `META-INF/spring/…AutoConfiguration.imports`. Each activates only if its conditions hold — `@ConditionalOnClass`, `@ConditionalOnMissingBean`, `@ConditionalOnProperty`. *Why it matters:* you must be able to say why a bean exists. "Boot magic" is a bad answer; "there's a conditional on missing bean, so my `@Bean` wins" is a good one.
-→ `--debug` prints the report: **Positive matches / Negative matches / Exclusions.**
-
-**We watched this happen.** `DataSourceAutoConfiguration` refused to produce a `DataSource` ("Failed to determine a suitable driver class") because no URL was configured. Once §0.3 supplied one, the same class produced the bean. Auto-configuration is conditional, not magical.
-
-**`FailureAnalyzer`.** Boot turns common startup failures into a readable `APPLICATION FAILED TO START` block with Description / Reason / Action. `DataSourceBeanCreationFailureAnalyzer` is the one we hit. Test failures print the raw trace instead, which is why the same error looked like 200 lines in one place and 3 lines in another.
-
-**Reading Spring stack traces.** The first exception is the most generic and least useful (`Failed to load ApplicationContext`). **Each `Caused by:` is one layer closer. The last one is the real cause.** Scroll to the bottom first.
-
-**Component scanning.** `@SpringBootApplication` includes `@ComponentScan` with no arguments = "scan my own package and below." The main class's package is the scan root — move it into a subpackage and Spring silently stops finding your beans.
-
-**Bean resolution.** With exactly one bean of a type, Spring Data resolves `AuditorAware` by type and you can drop `auditorAwareRef` entirely. Fewer strings to typo. Two beans of the same type → `NoUniqueBeanDefinitionException` the moment something injects by type.
-
-### Configuration
-
-**Typed config beats `@Value`.** `@ConfigurationProperties` + constructor-bound record + `@Validated` + Bean Validation constraints = one object, validated **at startup**, in CI. `@Value` scattered across classes gives you typos that surface at 3am on the one path nobody tested.
-
-**Relaxed binding.** `default-page-size` in YAML → `defaultPageSize` in Java. Boot tries kebab-case, camelCase, underscores, uppercase. This is also why `SPRING_DATASOURCE_PASSWORD` as an env var works.
-
-**Property source ordering.** Environment variables sit **above** YAML files. That's what makes 12-factor config work: prod supplies secrets from the environment and they override anything in a file.
-
-**`${VAR}` vs `${VAR:default}`.** One character. The first fails startup if the variable is missing. The second silently substitutes a placeholder — which is how a dev password reaches production. **No defaults for secrets, ever.**
-
-**Profile files merge, they don't replace.** `application.yml` always loads; `application-{profile}.yml` overrides individual keys on top. Put shared settings in the base file.
-
-**Cross-field validation is beyond `@Min`/`@Max`.** Field-level constraints validate one field in isolation. `defaultPageSize <= maxPageSize` is a *relationship* and is invisible to them. Two answers: a **compact constructor** on the record (what we used), or a **class-level `@ConstraintValidator`** (composable, reportable through the normal validation pipeline — the answer for request DTOs later).
-
-**Name config for the consumer, not the producer.** `POSTGRES_USER` is the *Postgres container's* API — its entrypoint reads it to create a superuser. Your app needs "what user do I connect as," which is a different job with different security properties. `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD` says "this app needs a database" and stays honest whether that's Docker, RDS or a connection pooler.
-
-### JPA & Hibernate
-
-**`open-in-view=false`.** Boot defaults it to `true`, holding the Hibernate session open through view rendering. Off because: it hides N+1 (they fire during JSON serialisation where no test looks), holds a DB connection for the whole request, and defers `LazyInitializationException` until the worst moment.
-
-**`ddl-auto=validate`** checks entities against the real schema at startup. Add a field without a migration → **the app refuses to start**. Guarantees beat discipline.
-→ But it only checks that tables and columns **exist with compatible types**. It does *not* check nullability against your mapping, unique constraints, indexes, or `insertable`/`updatable`. A whole class of mapping bugs only appears on the first write.
-
-**`show-sql=true` is the wrong tool.** It writes straight to stdout, bypassing your logging framework — no levels, no formatting, no correlation ID. Use loggers:
-
-| Logger | Level | Gives you |
+| § | Built | Key artifacts |
 |---|---|---|
-| `org.hibernate.SQL` | `DEBUG` | the statements (**uppercase SQL** — case-sensitive) |
-| `org.hibernate.orm.jdbc.bind` | `TRACE` | bound parameter values (**Hibernate 6** name) |
+| **0.1** | Project skeleton, package-by-feature, git | `pom.xml` (Boot 3.5.16, Java 21), `common/{config,error,web,logging,persistence}`, `organization/` |
+| **0.2** | Postgres via Docker Compose | `compose.yaml` (pinned image, named volume, healthcheck), `.env` + `.env.example` |
+| **0.3** | Profiles & typed configuration | `application{,-dev,-prod,-test}.yml`, `ApiProperties` |
+| **0.4** | Flyway & schema conventions | `V1__create_organizations.sql`, `global_id_seq`, named constraints |
+| **0.5** | `BaseEntity` & JPA auditing | `BaseEntity`, `AuditingConfig`, `AuditAwareImpl`, `Organization`, `OrganizationRepository` |
+| **0.6** | Web layer contracts | Controller / service / DTOs, `PageResponse`, `PageableFactory`, `PageQuery` |
+| **0.7** | Global error handling | `GlobalExceptionHandler`, `ErrorCode`, `CommonErrorCode`, `OrganizationErrorCode`, `ApplicationException` + subtypes |
+| **0.8** | Correlation ID & structured logging | `CorrelationIdFilter`, dev log pattern, prod ECS JSON |
 
-**`@MappedSuperclass` vs `@Embeddable` vs `@Inheritance`.** The first shares *mapping* with no table and no polymorphic queries. The second groups columns into a reusable value object. The third creates a real, queryable type hierarchy with table-strategy cost.
+**Working end to end:** `POST /api/v1/organizations` → 201 + `Location`, row persisted with audit columns · `GET /{id}` → 200/404 · `GET /` → paginated, capped, stable-sorted, **2 SQL queries** · every error an RFC 7807 `ProblemDetail` with a stable `code` and a `correlationId` that appears in the logs.
 
-**JPA auditing.** `@EnableJpaAuditing` + `@EntityListeners(AuditingEntityListener.class)` on the entity + an `AuditorAware` bean. Without the listener the annotations are **inert** — fields stay null and your `NOT NULL` column rejects the insert, with an error pointing at the database rather than the missing annotation.
-→ Auditing sets **both** created and last-modified on insert. A fresh row legitimately has `updated_at == created_at`.
-→ Put `@EnableJpaAuditing` on its own `@Configuration`, not the main class — on the main class it activates in every slice test, and `@WebMvcTest` (no JPA) fails looking for an `AuditorAware`.
+**Remaining in Phase 0:** §0.9 OpenAPI + Actuator (trim candidate) · §0.10 testing baseline · README.
 
-**`updatable = false` vs `insertable = false`.** The first is correct on created-fields: nothing can rewrite creation metadata. The second **omits the column from the INSERT** — fatal against a `NOT NULL` column with no default.
+---
 
-**Which JPA annotations actually do anything at runtime:**
+## 2. Challenges we faced
 
-| Runtime behaviour | DDL-generation only (inert under `validate`) |
+### Environment and tooling
+
+**Spring Initializr no longer serves Boot 3.** It rejects anything below 4.0.0 (`"compatibility range is >=4.0.0"`) in both the UI and the API — Boot 3.5's free support window ended mid-2026. *Resolution:* generate with Boot 4.1.1, then downgrade the pom. ⚠️ Not a one-line change — **Boot 4 renamed the starters**: `spring-boot-starter-webmvc` → `spring-boot-starter-web`, `spring-boot-starter-flyway` → no such thing (use `flyway-core`), and five modular `*-test` starters collapse into one `spring-boot-starter-test`.
+
+**No JDK 21 installed** (only 25 and Corretto 8). *Resolution:* `brew install openjdk@21`, `JAVA_HOME` in `~/.zshrc`. Verified by class-file major version 65.
+
+**Docker daemon not running** despite the CLI being present. *Resolution:* `open -a Docker`.
+
+**Lombok silently generated nothing under JDK 25.** Discovered by accident when Maven ran without `JAVA_HOME` — every Lombok method reported "cannot find symbol", a wall of errors looking nothing like "Lombok didn't run". *Cause:* Lombok is discovered as an annotation processor **implicitly from the classpath**; JDK 21 warns about implicit annotation processing and **JDK 23+ disables it by default**. The build worked only because `JAVA_HOME` pointed at 21. *Resolution:* declare Lombok explicitly in `maven-compiler-plugin`'s `annotationProcessorPaths`. Now compiles on 21 **and** 25.
+
+### Code that compiled, ran, and quietly did the wrong thing
+
+**This is the theme of Phase 0.** Four separate bugs, none of which crashed:
+
+| Bug | What actually happened |
 |---|---|
-| `sequenceName`, `allocationSize` | `initialValue` |
-| `insertable`, `updatable` | `unique` |
-| `nullable` | `columnDefinition`, `length` |
+| `@Max(100)` on a `String` | `@Max` is a *numeric* constraint, but Hibernate Validator ships a `CharSequence` validator that **parses the string as a number**. `"Acme Corp"` isn't one, so **every real organization name was rejected** — with the message *"must be less than or equal to 100"*. Fix: `@Size`. |
+| `org.hibernate.sql` (lowercase) | Logback happily created a logger by that name and set it to DEBUG. Hibernate's logger is `org.hibernate.SQL`. Logger names are case-sensitive, so it **logged nothing**. |
+| `insertable = false` on `updated_at` | The reasoning was sound ("it hasn't been updated yet"), but the column is `NOT NULL` with no default, so Hibernate omitted it from the INSERT and **the first write failed**. `ddl-auto=validate` passed — it checks that columns exist with compatible types, not nullability against the mapping. |
+| `${DB_PASSWORD:taskflow_local_dev}` | After correctly removing hardcoded prod values, colon-defaults were added to *every* variable including the password — so a prod deploy with no config would have started successfully on localhost with the committed dev password. |
 
-**ID generation.** `IDENTITY` forces a DB roundtrip per `persist` and **silently disables JDBC batch inserts**. A sequence with a pooled allocation asks the database once per *N* inserts and hands out the rest from memory.
-→ ⚠️ **`allocationSize` must equal the sequence's `INCREMENT BY`.** Ours: both 50.
+💡 **The lesson worth carrying:** none of these threw. They compiled, started, and produced plausible-looking behaviour. This is the entire argument for §0.10 — a `@WebMvcTest` asserting the exact validation response would have caught the first in seconds.
 
-**`equals`/`hashCode` on entities — deliberately absent.** A new entity has `id == null`. Add it to a `HashSet`, persist it, the ID appears, its hash code changes while it's in the set, and the set can no longer find it. Phase 5 covers the correct patterns.
+### Design problems that needed thinking
 
-### PostgreSQL
+**`common` would have had to import a feature.** The exception advice lives in `common/error`; `DuplicateSlugException` lived in `organization/`. Importing it would have inverted the dependency rule set in §0.1 — and multiplied by twelve features, `common/error` ends up importing the whole app. *Resolution:* an `ErrorCode` **interface** in `common`, implemented by per-feature enums. Exception *types* stay generic (`ResourceConflictException`); the *codes* stay with their feature.
 
-**`text`, `varchar`, `varchar(n)` are the same type** — identical storage, identical performance. `(n)` is purely a length constraint. (`char(n)` blank-pads and is almost always wrong.) So the question is never "which is faster," it's "do I want a limit, and what should it be?"
-→ Increasing a `varchar` length later is metadata-only and instant. **Decreasing requires a full table scan.** Err generous.
+**"If I override `handleExceptionInternal`, how do I set a code for every exception?"** *Resolution:* recognise two different kinds of error. **Domain errors** carry their own `ErrorCode` because you decided what they mean. **Protocol errors** (405, 415, malformed JSON) are already classified by their HTTP status — there's no extra fact to encode. So the code is derived from the status for those, with two explicit overrides where it matters. You enumerate a handful of statuses, not twenty exception types.
 
-**`timestamptz` does not store a time zone.** Despite the name, it stores a UTC instant — the input offset is used to convert, then discarded, and reads render in the session's zone.
-→ So `Instant` is the correct Java type. `OffsetDateTime` promises to preserve an offset the column throws away. `LocalDateTime` has no zone at all and is silently wrong across DST.
-→ ⚠️ `Instant` holds **nanoseconds**, `timestamptz` holds **microseconds**. A save-then-reload round-trip truncates, so exact-equality assertions on timestamps can fail on an invisible difference.
+**Check-then-insert is a race.** 30 concurrent POSTs with the same new slug produced 1 × 201, 25 × 409 from the service check, and **4 × 500** from the unique constraint — same logical error, two different status codes depending on timing. *Resolution:* handle `DataIntegrityViolationException` → 409. Deliberately **not** built: a constraint-name → error-code registry, which would have reintroduced the `common`→feature dependency for one mapping. The constraint name goes to the log and a response property instead.
 
-**A `UNIQUE` constraint *is* an index.** Postgres implements it by creating a unique B-tree, named after the constraint. A second index on the same column is pure duplicate write cost. Being a B-tree, it also serves `ORDER BY` and prefix lookups for free.
+**The race didn't reproduce at low concurrency** — six requests all got caught by the service check. Needed 30 before the window opened. ⚠️ Worth remembering: *"I couldn't reproduce it"* is not evidence a race doesn't exist.
 
-**Name every constraint explicitly** — `pk_ uk_ ck_ fk_ ix_`. The payoff arrives in §0.7: when Postgres throws a unique violation, the **constraint name is the only reliable thing in the exception**. `uk_organizations_slug` maps cleanly to error code `ORGANIZATION_SLUG_TAKEN`. Auto-generated names don't.
+**Client-supplied `sort` was a client-controlled 500.** `?sort=doesNotExist` → `PropertyReferenceException`. Beyond the wrong status, every entity field was sortable — and in Phase 5, `?sort=parent.title` would let a client force an unplanned join. *Resolution:* a per-endpoint whitelist.
 
-**Postgres regex uses POSIX ARE** via the `~` operator, and supports non-capturing groups. `^[a-z0-9-]+$` looks right but accepts `---`, `-acme` and `acme--corp`; `^[a-z0-9]+(?:-[a-z0-9]+)*$` expresses "words separated by single hyphens."
+**The correlation ID had nothing to correlate to.** The filter worked, but a *successful* request logged only Hibernate SQL lines — which are **dev-only**. In prod, a successful request produced zero log lines, and 4xx were logged at `DEBUG` (invisible at INFO). A user could quote an ID from a 404 and the logs had no record it happened. *Resolution:* one INFO completion line per request.
 
-### Flyway
+**Spring Data skips the count query** when you're on the first page and the content is smaller than the page size — so measuring with 1 row and `size=20` shows **one** query, not two, and looks broken. Measure with more rows than the page size.
 
-**The problem it solves.** Your Java is versioned in git; your schema isn't. Without migrations, production has a schema that exists only because of `ALTER`s people typed over eighteen months, and nobody can reproduce it.
+### Process
 
-**Why not `ddl-auto=update`:** it only ever *adds* (rename a column and you get both); it can't migrate data; there's no diff and no review; and it's non-deterministic across Hibernate versions, so dev and prod drift silently.
-
-**How it works.** Files in `db/migration`, named `V<n>__<description>.sql`. On startup Flyway creates `flyway_schema_history` if absent, scans the classpath, compares against what's recorded, applies pending migrations in version order (each in a transaction), and records each with a **checksum**.
-
-**Checksums make migrations immutable.** Edit an applied migration and Flyway refuses to start — because your DB, your teammate's DB, and a fresh DB would otherwise hold three different schemas all calling themselves "V1." **Fix forward with a new version.**
-→ There is **no free rollback**. `undo` is a paid feature. You roll forward with a reversing migration. This is also why migrations should be small and boring.
-
-**Flyway runs before the `EntityManagerFactory`.** Boot makes the EMF depend on the Flyway bean — visible in the stack trace we hit: *"Failed to initialize dependency 'flyway' of LoadTimeWeaverAware bean 'entityManagerFactory'"*. That ordering is what makes `validate` a real guard: **Flyway builds, Hibernate checks.**
-
-**Types:** `V` runs once in order (95% of what you write) · `R` re-runs when its checksum changes (views, functions) · `U` is undo, a paid feature.
-
-### Docker & Compose
-
-**`.env` vs `env_file:` — two different mechanisms.** A `.env` file next to `../../compose.yaml` is read **by Compose itself** to substitute `${VAR}` *in the compose file*. `env_file:` passes variables **into the container**. We use the first, so the compose file documents which variables exist.
-
-**`CMD` vs `CMD-SHELL` in a healthcheck.** `CMD` execs directly with no shell, so `${POSTGRES_USER}` never expands. `CMD-SHELL` runs through `sh` inside the container.
-
-**Healthcheck must name the user and database.** On first run Postgres starts a temporary server, initialises, then **shuts down and restarts**. A bare `pg_isready` can report healthy during that window, so your app connects to a server about to vanish. `start_period` gives the bootstrap room before failures count.
-
-**Named volumes** are managed by Docker, survive `docker compose down`, and avoid macOS's slow bind-mount layer.
-
-**No `version:` key.** Required in Compose v1, obsolete in v2. A tutorial starting with `version: "3.8"` is old.
-
-### Security hygiene
-
-**Add the `../../.gitignore` rule *before* the secret file exists.** Once committed, it's in history forever — removal needs a rewrite, and if pushed, the credential must be treated as leaked and rotated. Ordering is the whole defence.
-
-**Three layers of validation, each catching what the others can't:** Bean Validation at the boundary catches malformed input cheaply · the service enforces rules needing DB state · the **database constraint catches the race between check and insert**.
+**`git commit -a` swept unrelated files** — twice, pulling doc edits into unrelated commits. `git add <file>` when anything else might be dirty.
 
 ---
 
-## 3. Traps — quick reference
+## 3. Production practices implemented, and what each prevents
 
-| ⚠️ Trap | What happens | Status |
-|---|---|---|
-| `ddl-auto=update` | Schema drifts silently; never drops or narrows | Avoided |
-| Main class not in base package | `@ComponentScan` root moves; beans silently vanish | Avoided |
-| Single `_` in a Flyway filename | File **silently ignored**, table never created | Known |
-| Editing an applied migration | Checksum mismatch; Flyway refuses to start | Known |
-| Two devs both create `V2` | Version collision on merge | Known |
-| `flyway.clean` enabled | Drops every object in the schema | Disabled |
-| `postgres:latest` | Silent major upgrade makes the data dir unreadable | Pinned to 17 |
-| `pg_isready` without `-U`/`-d` | Reports healthy mid-bootstrap | Avoided |
-| Changing `POSTGRES_PASSWORD` after first run | **Nothing happens** — init only runs on an empty data dir. Fix: `down -v` | Known |
-| `.env` committed | Credential in history forever | Avoided |
-| `${SECRET:default}` | Prod silently starts with a placeholder password | **Hit and fixed** |
-| `spring.profiles.active` in the committed base file | A deploy that forgets the override runs dev config | Accepted, documented |
-| `org.hibernate.sql` (lowercase) | Logger created, **logs nothing** — silent no-op | **Hit and fixed** |
-| Hibernate 5 binder logger name on Hibernate 6 | Same silent no-op | Avoided |
-| `@Data`/`@ToString` on an entity | `@ToString` walks lazy associations → `LazyInitializationException` or N+1 **from a log statement** | Banned |
-| `@Builder` on an entity | Removes the no-arg constructor JPA requires | Banned |
-| `equals`/`hashCode` with a generated ID | Entity lost inside a `HashSet` after persist | Deferred to Phase 5 |
-| `@Table` name — class is singular, table is plural | `validate` fails at startup | **Hit and fixed** |
-| `insertable = false` on a `NOT NULL` column | `validate` passes; the **first insert** fails | **Hit and fixed** |
-| Two beans with near-identical names | Both exist; one is dead code; ambiguity later | **Hit and fixed** |
-| `LocalDateTime` for `timestamptz` | Zone lost, wrong across DST | Avoided |
-| `Instant` vs `timestamptz` precision | Round-trip truncates ns → µs; equality assertions fail | Known, bites in §0.10 |
-| Both `application.properties` and `.yml` present | Both load, `.properties` wins | Avoided |
-| `git commit -a` | Sweeps every tracked modified file, not just yours | **Hit twice** |
-| Returning `Page`/`PageImpl` from a controller | Unstable JSON contract | Coming in §0.6 |
-| Sorting without a tiebreaker | Page 2 repeats or skips rows | Coming in §0.6 |
+### Schema & database
+
+| Practice | What it prevents |
+|---|---|
+| Flyway migrations only; **never** `ddl-auto=update` | Schema drift with no review trail. `update` only ever *adds* — renames leave both columns, deletions leave the column forever. |
+| `ddl-auto=validate` | Entity/migration drift. Add a field without a migration and **the app refuses to start** — in CI, before deploy. Verified deliberately. |
+| `flyway.clean-disabled=true` | One misconfigured job dropping every object in the schema. |
+| Migrations immutable, fix forward | Three environments each holding a different "V1". Enforced by checksums. |
+| **Explicitly named constraints** (`uk_organizations_slug`) | Auto-generated names are unusable for error mapping. Demonstrated: the constraint name appears in the log when the race fires. |
+| `timestamptz`, never `timestamp` | Timestamps silently meaning "whatever the server thought". Unfixable once you have a second timezone. |
+| Deliberate `varchar` lengths + `CHECK` on slug format | Unbounded input reaching the database. The DB is the final guard when a bug bypasses the service. |
+| Sequence `increment by 50` matched to `allocationSize = 50` | Duplicate-key violations under concurrency, appearing weeks later, far from the cause. |
+
+### Configuration & secrets
+
+| Practice | What it prevents |
+|---|---|
+| Typed `@ConfigurationProperties`, constructor-bound, `@Validated` | Property typos surfacing at 3am on an untested path. Fails at **startup**, in CI. |
+| Cross-field invariant in the record's compact constructor | `defaultPageSize > maxPageSize` starting cleanly. Now load-bearing — `PageableFactory` skips a runtime check because startup guarantees it. |
+| **No defaults for secrets** — `${VAR}`, never `${VAR:default}` | A prod deploy missing its config starting anyway with a placeholder password. Verified: prod profile with no env dies at startup. |
+| Secrets from env vars; `.env` gitignored, `.env.example` committed | Credentials in git history. |
+| **`.gitignore` rule added *before* the secret file existed** | Ordering is the defence — once committed, it's in history forever. |
+| Config named for the consumer (`DB_*`, not `POSTGRES_*`) | An application config contract describing one developer's laptop. |
+| Three profiles, prod with no Hibernate logging | Every SQL statement — and its bound parameters — written to production logs. |
+
+### JPA & transactions
+
+| Practice | What it prevents |
+|---|---|
+| `open-in-view=false` from day one | N+1 hidden inside JSON serialisation; a DB connection held for the whole request. |
+| Explicit `@Transactional` in the service, `readOnly = true` on queries | Ambiguous boundaries; wasted dirty-checking and snapshot retention. |
+| Entity → DTO mapping **inside** the transaction | `LazyInitializationException` the moment an association is added (Phase 5). |
+| No `equals`/`hashCode` on entities, deliberately | An entity lost inside a `HashSet` after persist, when the generated ID changes its hash. |
+| Audit fields have no public setters | Application code overwriting creation metadata. |
+| `updatable = false` on created fields | An update rewriting who created the row. |
+
+### API & web layer
+
+| Practice | What it prevents |
+|---|---|
+| Package-by-feature; no feature imports another | Four packages edited for every change; invisible coupling. Already paid off — it forced the `ErrorCode` design. |
+| DTOs as records; entities never in controller signatures | JSON coupled to schema; over-exposure (a password hash in Phase 1); clients supplying `id` and audit fields. |
+| Controllers do HTTP only | Business rules unreachable from anywhere but a web request, and untestable without one. |
+| Own `PageResponse`, never `PageImpl` | A JSON contract that is a serialisation of a Spring internal class. |
+| Page size capped from config | `?size=99999` loading the table into memory. |
+| **Stable sort with a tiebreaker** | Page 2 repeating or skipping rows — silent, intermittent, unreproducible on demand. |
+| Per-endpoint **sort whitelist** | Client-controlled 500s, and (Phase 5) a client forcing unplanned joins. |
+| Three-layer validation | Boundary catches malformed input cheaply · service enforces rules needing DB state · **constraint catches the race between check and insert**. |
+| `201` + `Location` on create | Clients constructing resource URLs themselves. |
+
+### Errors
+
+| Practice | What it prevents |
+|---|---|
+| One RFC 7807 `ProblemDetail` contract | Every endpoint inventing its own error shape. |
+| **One funnel** (`handleExceptionInternal`) | The same stamping logic duplicated across handlers. Adding `correlationId` in §0.8 was one line. |
+| `ErrorCode` enum as a public contract | Clients string-matching on prose messages. |
+| Structured properties (`slug`, `id`, `property`) | Machine-readable data buried in a sentence. |
+| Generic 500 body; full detail logged server-side | Exception messages leaking schema, file paths, library versions, SQL. |
+| `include-stacktrace` / `include-message` = `never` | Boot's fallback error path leaking what your handler carefully doesn't. |
+| Log levels by severity — `debug` 4xx, `warn` constraints, `error` unexpected | Client typos filling the error log and drowning the one real failure. |
+
+### Logging & observability
+
+| Practice | What it prevents |
+|---|---|
+| Correlation ID as a **filter**, highest precedence | An interceptor wouldn't run for 401/403 — exactly the responses you need to trace. |
+| `OncePerRequestFilter` | Two IDs for one request on internal `FORWARD`/`ERROR` dispatch. |
+| **`MDC.remove` in `finally`** | A pooled thread stamping one request's ID onto the next request's logs — debugging with confidently wrong evidence. |
+| Header validated (whitelist + 64-char cap) | Log injection via newlines (forged log lines) and log flooding. |
+| Response header set **before** `doFilter` | Headers silently lost once the response commits. |
+| One completion line per request, at INFO | A correlation ID with nothing to correlate to. |
+| `getRequestURI()` — no query string | `?token=...` written to access logs in plaintext. |
+| `System.nanoTime()` for duration | Negative durations when the wall clock steps. |
+| Parameterised SLF4J | String built even when the level is disabled; broken structured-log field extraction. |
+| Structured JSON (ECS) in prod | MDC values buried in message text instead of being queryable fields. |
+
+### Build & infrastructure
+
+| Practice | What it prevents |
+|---|---|
+| Pinned image tag (`postgres:17-alpine`) | A silent major upgrade making the data directory unreadable. |
+| Named volume | Data lost on `docker compose down`. |
+| Healthcheck with `-U`/`-d` and `start_period` | Connecting to a bootstrapping server that's about to restart. |
+| `annotationProcessorPaths` for Lombok | A build that only works on one JDK, failing with "cannot find symbol". |
+| Small, per-feature commits | Reviews and bisects that can't isolate a change. |
 
 ---
 
-## 4. Interview questions you can answer *now*
+## 4. Learning at each stage
+
+**§0.1 — Skeleton.** Auto-configuration is `@Conditional`-driven, not magic; `@ConditionalOnMissingBean` is why your `@Bean` wins. `@SpringBootApplication` implies `@ComponentScan` from **its own package downward** — move the main class and beans silently vanish. Package-by-feature makes cross-feature dependencies visible instead of accidental.
+
+**§0.2 — Postgres.** A `.env` file beside `compose.yaml` is read **by Compose** for `${VAR}` substitution; `env_file:` passes variables **into the container** — different mechanisms. `CMD-SHELL` runs through a shell so `${VAR}` expands; `CMD` doesn't. Postgres only initialises on an **empty data directory**, so changing the password later does nothing until `down -v`.
+
+**§0.3 — Configuration.** Profile files *merge* — the base always loads, the profile file overrides keys. Relaxed binding maps `default-page-size` → `defaultPageSize` and `SPRING_DATASOURCE_URL` → `spring.datasource.url`. Environment variables sit **above** YAML in the property source order, which is what makes 12-factor config work. Field-level Bean Validation cannot express a relationship between two fields — that needs a compact constructor or a class-level constraint.
+*Deliberately broken:* `max-page-size: 0` → startup failure naming the property, value and constraint.
+
+**§0.4 — Flyway.** Migrations are files applied once, in order, recorded with a **checksum** — which is what makes them immutable and why you roll forward, never back (undo is a paid feature). Flyway runs **before** the `EntityManagerFactory`; Boot makes the EMF depend on the Flyway bean, which is visible in the stack trace. That ordering is what turns `validate` into a real guard. One underscore instead of two and the file is silently ignored.
+In Postgres: `text`, `varchar` and `varchar(n)` are the same type — `(n)` is only a constraint. Increasing a length is instant; decreasing requires a table scan.
+
+**§0.5 — Entities & auditing.** `@MappedSuperclass` shares mapping with no table and no polymorphic queries — unlike `@Embeddable` (a value object) or `@Inheritance` (a real type hierarchy). Auditing needs `@EntityListeners` or the annotations are inert. `@EnableJpaAuditing` belongs on its own `@Configuration`, not the main class, or it activates in slice tests with no JPA.
+`timestamptz` **does not store a zone** — it stores a UTC instant and discards the offset, which is why `Instant` is the correct Java type and `OffsetDateTime` promises something the column can't keep. ⚠️ `Instant` holds nanoseconds, `timestamptz` microseconds — round-trips truncate, so exact-equality assertions on timestamps can fail invisibly (this will matter in §0.10).
+Some JPA annotations affect runtime (`sequenceName`, `allocationSize`, `insertable`, `updatable`); others are DDL-generation only and **inert under `validate`** (`initialValue`, `unique`, `length`).
+
+**§0.6 — Web contracts.** `@Transactional` works by **proxy** — a call from within the same class bypasses it entirely and silently runs with no transaction. `JpaRepository` already has `findAll(Pageable)`; `Page.map()` converts the content type while preserving metadata **without another query**. Sort properties are *entity field names*, not column names. Offset pagination degrades with depth — `OFFSET 100000` makes Postgres produce and discard 100,000 rows; keyset pagination is the answer at scale.
+Sequence gaps (ids 202–206, not 1–5) are the pooled allocator working: each restart abandons the rest of its block. Sequences guarantee uniqueness, never contiguity.
+
+**§0.7 — Errors.** `ResponseEntityExceptionHandler` already handles the MVC exceptions and funnels them all through `handleExceptionInternal` — call `super` first and **enrich** the `ProblemDetail` it produced rather than building a fresh one, or you discard the framework's title, detail and message-source resolution. `org.hibernate.exception.ConstraintViolationException` and `jakarta.validation.ConstraintViolationException` share a name and are unrelated types.
+⚠️ Security exceptions are thrown **inside the filter chain**, before `DispatcherServlet` — `@RestControllerAdvice` will never see them. Phase 2 needs an `AuthenticationEntryPoint` and `AccessDeniedHandler`. Same reason exceptions thrown from a filter bypass the advice.
+
+**§0.8 — Observability.** MDC is a `ThreadLocal` map the logging framework reads via `%X{key}`. 📌 The same ThreadLocal-plus-pooled-thread hazard returns in **Phase 3** (tenant context) and **Phase 9** (`@Async` not inheriting context) — learn it once, it pays three times.
+Boot's default console pattern contains an empty `${LOG_CORRELATION_PATTERN:-}` slot, fillable with `logging.pattern.correlation` — no need to rewrite the pattern. Boot 3.4+ has native structured logging (`logging.structured.format.console=ecs`), so no `logstash-logback-encoder`. In JSON output MDC entries become **top-level queryable fields**.
+Production systems usually use Micrometer Tracing / OpenTelemetry with W3C `traceparent` rather than hand-rolling this; the hand-rolled version is for learning the mechanism.
+
+---
+
+## 5. Interview questions
+
+### Answerable now, with the shape of the answer
 
 1. **How does Boot decide which auto-configurations apply, and how do you override one?** Conditional annotations on classes listed in `AutoConfiguration.imports`; `@ConditionalOnMissingBean` means your own `@Bean` wins. `--debug` prints the match report.
-2. **Why Flyway over `ddl-auto=update`?** Three reasons: versioned and reviewable in git; no data-destructive guesses and no data migrations from Hibernate; `update` only ever adds, so prod diverges from your code forever.
+2. **Why Flyway over `ddl-auto=update`?** Versioned and reviewable in git · no data-destructive guesses and no data migrations from Hibernate · `update` only ever adds, so prod diverges from your code permanently.
 3. **How do you manage schema changes across environments?** Versioned migrations in source control, immutability enforced by checksums, roll forward not back, `validate` as the drift guard.
-4. **How do you stop someone forgetting a migration?** You don't rely on discipline — `ddl-auto=validate` makes the application refuse to start, in CI, before deploy.
-5. **What does `open-in-view=false` change?** Lazy access outside a transaction now fails loudly instead of silently firing queries during serialisation and holding a connection for the whole request.
+4. **How do you stop someone forgetting a migration?** Not discipline — `ddl-auto=validate` makes the app refuse to start, in CI, before deploy.
+5. **What does `open-in-view=false` change?** Lazy access outside a transaction fails loudly instead of silently firing queries during serialisation and holding a connection for the whole request.
 6. **Why `Instant` and not `LocalDateTime` for a timestamp column?** `timestamptz` stores an absolute UTC instant with no zone; `Instant` means exactly that. `LocalDateTime` has no zone; `OffsetDateTime` claims to preserve one the column discards.
-7. **Why is `@Data` dangerous on a JPA entity?** Generated `equals`/`hashCode` over all fields breaks the hash contract for generated IDs, and `@ToString` walks lazy associations — a log statement causing a query storm or an exception.
-8. **How do you implement `equals`/`hashCode` on a JPA entity?** (Know that the naive answer is wrong and why — full answer in Phase 5.)
-9. **Why is `IDENTITY` a problematic ID strategy at scale?** DB roundtrip per persist, and it silently disables JDBC batch inserts.
-10. **Does a unique column need an index?** No — Postgres implements `UNIQUE` by creating a unique B-tree index.
-11. **How do you see the SQL Hibernate generates and the parameters it binds?** `org.hibernate.SQL` at DEBUG and `org.hibernate.orm.jdbc.bind` at TRACE — not `show-sql`, which bypasses your logging framework.
-12. **How do you make sure a misconfigured deploy fails loudly?** No defaults for secrets (`${VAR}` not `${VAR:default}`), and typed `@ConfigurationProperties` validated at startup.
+7. **Why is `@Data` dangerous on a JPA entity?** Generated `equals`/`hashCode` break the hash contract for generated IDs, and `@ToString` walks lazy associations — a log statement causing a query storm or an exception.
+8. **Why is `IDENTITY` a problematic ID strategy at scale?** A DB round-trip per persist, and it silently disables JDBC batch inserts.
+9. **Does a unique column need an index?** No — Postgres implements `UNIQUE` by creating a unique B-tree index, named after the constraint.
+10. **Why are there gaps in my IDs?** Pooled sequence allocation; each restart abandons the rest of its block. Sequences guarantee uniqueness, not contiguity.
+11. **How do you see the SQL Hibernate generates and the parameters it binds?** `org.hibernate.SQL` at DEBUG, `org.hibernate.orm.jdbc.bind` at TRACE — not `show-sql`, which bypasses the logging framework entirely.
+12. **How do you make sure a misconfigured deploy fails loudly?** No defaults for secrets, and typed `@ConfigurationProperties` validated at startup.
 13. **How does Spring know which classes to scan?** From the `@SpringBootApplication` class's own package downward.
-14. **How would you debug a slow query in production?** Database-side metrics and slow-query logs — not DEBUG logging in the app, which costs throughput and risks PII in the logs.
+14. **How would you debug a slow query in production?** Database-side metrics and slow-query logs — not DEBUG logging in the app, which costs throughput and risks PII.
+15. **Filter or interceptor?** A filter, ordered early — an interceptor runs inside `DispatcherServlet` after handler mapping, so it never runs when security rejects a request, which is exactly what you need to trace.
+16. **Walk me through your API error contract.** RFC 7807 `ProblemDetail`, a stable `code` enum, structured properties, a `correlationId`, one funnel so every error — domain and framework — has the same shape.
+17. **Where could a 500 leak information, and how did you stop it?** Exception messages carry schema, paths, library versions and SQL. Generic body to the client, full stack trace to the logs, `include-stacktrace`/`include-message` never.
+18. **Why extend `ResponseEntityExceptionHandler` rather than write a plain advice?** The MVC exceptions are already handled, and there's a single `handleExceptionInternal` funnel to stamp shared fields on every response.
+19. **How do you handle a race condition?** Not a lock — the service check handles the common case cheaply, the database constraint guarantees correctness, and both map to the same 409. Demonstrated under 30 concurrent requests.
+20. **How do you stop a client controlling your query plan?** Whitelist sortable fields per endpoint; an unvalidated `sort` parameter is client-controlled SQL ordering and, with associations, client-controlled joins.
+21. **A user reports a failed request at 14:32 — find it.** Correlation ID generated in a filter, put in MDC, returned in the response header and in the error body, present on every log line for that request, and a queryable field in prod's JSON logs.
+22. **How would you paginate a million rows?** Offset pagination degrades with depth because the database produces and discards the skipped rows; keyset/seek pagination is the answer.
+23. **What broke when you upgraded the JDK?** Lombok stopped generating — implicit annotation processing is disabled by default in JDK 23+. Fixed by declaring it in `annotationProcessorPaths`.
+24. **Why three layers of validation?** The boundary catches malformed input cheaply, the service enforces rules needing DB state, and the constraint catches the race between check and insert.
+25. **What causes unstable pagination?** Sorting without a deterministic tiebreaker — rows sharing a sort value have no defined order, so pages repeat or skip.
 
-**Not yet answerable — coming up:** filter vs interceptor (§0.8) · the API error contract (§0.7) · why not H2 (§0.10) · context caching (§0.10) · unstable pagination (§0.6).
+### Not answerable yet
+
+- **Why not H2 in tests?** — §0.10
+- **Why is a Spring test suite slow / what is context caching?** — §0.10
+- **How do you implement `equals`/`hashCode` on a JPA entity?** — Phase 5 (you know the naive answer is wrong and why)
+- **How would you do distributed tracing?** — partial; Micrometer Tracing / OpenTelemetry named but not used
 
 ---
 
-## 5. Commands cheat-sheet
+## 6. Commands
 
 ```bash
 # Database
-docker compose up -d && docker compose ps          # start, check STATUS = healthy
-docker compose logs -f postgres
+docker compose up -d && docker compose ps          # STATUS must read healthy
 docker compose exec postgres psql -U taskflow -d taskflow
 docker compose down                                 # stop, keep data
-docker compose down -v                              # stop, DROP DATA — the reset button
+docker compose down -v                              # DROP DATA — the reset button
 
 # Inside psql
-\dt                 # tables
-\ds                 # sequences
-\d organizations    # one table: columns, indexes, constraints
-
-# Flyway state
-select version, description, success, execution_time from flyway_schema_history;
+\dt   \ds   \d organizations
+select version, description, success from flyway_schema_history;
 
 # App
 ./mvnw clean compile
 ./mvnw spring-boot:run
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=prod   # must FAIL: missing DB_* vars
 ./mvnw spring-boot:run --debug                            # auto-configuration report
+
+# Read Boot's own config when docs are thin
+unzip -p ~/.m2/repository/org/springframework/boot/spring-boot/3.5.16/spring-boot-3.5.16.jar \
+  org/springframework/boot/logging/logback/defaults.xml | grep CONSOLE_LOG_PATTERN
 ```
 
 ---
 
-## 6. Deliberate failures worth repeating
+## 7. Deliberate failures — the strongest material
 
-Each of these was created on purpose to see the error. They are the strongest interview material because they're experience, not theory.
+Each created on purpose to see the error. These are experience, not theory.
 
 | Broke | Result |
 |---|---|
-| `max-page-size: 0` | Startup fails naming the property, value and violated constraint |
+| `max-page-size: 0` | Startup fails, naming property, value and violated constraint |
 | `default-page-size > max-page-size` | Startup fails from the record's compact constructor |
-| Ran the `prod` profile with no env vars | Startup fails — unresolved placeholder |
-| Added an entity field with no migration | Startup fails — `validate` catches the drift |
-| `insertable = false` on a `NOT NULL` column | Startup **passes**; the first INSERT fails. *What `validate` cannot catch.* |
+| `prod` profile with no env vars | Startup fails — unresolved placeholder |
+| Entity field with no migration | Startup fails — `validate` catches the drift |
+| `insertable = false` on a `NOT NULL` column | Startup **passes**; the first INSERT fails |
+| 30 concurrent POSTs, same slug | 1 × 201, 25 × 409 (service), 4 × 409 (constraint) — **zero 500s** after the fix |
 
-That last pair is the best story in the set: one shows what schema validation guarantees, the other shows its limit.
+The last two are the best pair: one shows what schema validation guarantees, the other shows its limit.
 
 ---
 
-## 7. Where things stand
+## 8. Carried debt
 
-**Built:** §0.1 skeleton · §0.2 Postgres in Docker · §0.3 profiles + typed config · §0.4 Flyway + `V1` · §0.5 `BaseEntity` + auditing + `Organization`
-
-**Left:** §0.6 web contracts and the first insert · §0.7 error handling · §0.8 correlation ID + logging · §0.9 OpenAPI + Actuator (**trim candidate**) · §0.10 testing baseline
-
-**Carried debt:** README not written (holds the API and DB naming conventions) · `--debug` auto-config report not yet read · `@NoArgsConstructor` still public on `Organization`.
+- **README** — not written. Holds the API conventions, DB naming conventions, and the prod `DB_*` variable list. Outstanding since §0.1.
+- **`--debug` auto-configuration report** — not yet read. Two minutes, and it's interview question #1.
+- `@NoArgsConstructor` still public on `Organization` (`protected` is enough for JPA).
+- Unknown paths leak `"No static resource api/v1/nope."`; type-conversion messages leak `java.lang.Integer`.
+- `CorrelationIdFilter` now does two jobs; split if it grows.
+- Sort whitelist excludes `name` and `slug` — the two fields a user would most want to sort by.
+- Multiple validation errors per field are returned ungrouped; the `@Pattern` message echoes the raw regex.
+- Java `@Size(min = 3)` on slug is stricter than the DB `CHECK`, which accepts one character.
+- **§2.1 ↔ §5 reconciliation:** the security-action audit log has no home in the week plan.
