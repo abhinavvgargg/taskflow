@@ -156,6 +156,39 @@ taskflow/
 
 ---
 
+### 0.6 — additions from the session walkthrough
+
+**Why entities never cross the web layer** (be able to give all three): **coupling** — your JSON becomes your schema · **over-exposure** — every entity field is silently published, which in Phase 1 means a password hash · **input trust** — accepting an entity means accepting a client-supplied `id` and audit fields.
+
+⚠️ **`@Transactional` works by proxy.** A `@Transactional` method called from *within the same class* bypasses the proxy and runs with **no transaction**, silently. Private methods are never proxied. (Week-0 revision topic — re-read it.)
+
+⚠️ **`open-in-view=false` bites here first.** The session closes when the service method returns, so **map entity → DTO inside the transaction**. `Organization` has no lazy associations yet so nothing breaks today; build the reflex now, because the same mistake throws `LazyInitializationException` in Phase 5.
+
+⚠️ **Check-then-insert for slug uniqueness is a race**, and that is fine. Two concurrent requests can both pass the service check. The unique constraint is the real guard; the service check just gives a clean error for the common case. Three-layer validation, made concrete.
+
+#### 🏗️ Four decisions
+
+| # | Decision | Options | Recommended |
+|---|---|---|---|
+| 1 | Slug source | client-supplied / derived from `name` | **Client-supplied** — deriving needs slugify *and* collision handling (`acme-2`); client-supplied needs validation you're writing anyway, and makes the 409 a real case. |
+| 2 | Mapping location | static factory on the response record / separate mapper class | **Static factory** at one entity. No MapStruct — out of Phase 0 scope. |
+| 3 | Who builds the `Pageable` | Spring's built-in resolver (`spring.data.web.pageable.max-page-size`) / build it from `ApiProperties` | **From `ApiProperties`** — one source of truth for your API config. Spring's built-in is legitimate, but then **delete the unused `ApiProperties` fields** rather than keeping dead config. Do not keep both. |
+| 4 | Default sort | — | Pick one and justify it. The deterministic tiebreaker is non-negotiable. |
+
+#### ⚠️ Errors will look bad until §0.7
+
+No exception handler exists yet, so a duplicate slug or missing id surfaces as a **500 with a stack trace**. Expected. **Throw clean domain exceptions and let them be ugly** — §0.7 maps them in one place. Reaching for `ResponseEntity.status(409)` inside the service is the wrong fix and gets unpicked the next day.
+
+#### Verify, in order
+
+1. **The auditing fix, finally proven.** After the first POST:
+   `select id, slug, created_at, updated_at, created_by, updated_by from organizations;`
+   Want: `created_at` and `updated_at` **both populated and equal**, both `_by` columns reading `system`. This validates the `insertable = false` fix — the bug `ddl-auto=validate` could not catch.
+2. **Page size cap.** `?size=99999` clamps rather than exploding.
+3. 📊 **Count the queries** on the list endpoint with `org.hibernate.SQL` at DEBUG. **Expect exactly two** (count + page). Record the number — it is the Phase 8 N+1 baseline.
+
+---
+
 ## 0.7 — Global error handling (~1h 15m)
 
 The highest-leverage hour in Phase 0. Every later phase just registers exceptions into the machinery you build now.
