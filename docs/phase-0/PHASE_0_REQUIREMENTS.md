@@ -241,19 +241,19 @@ The highest-leverage hour in Phase 0. Every later phase just registers exception
 
 Four tests. Not coverage — one of each *kind*, so the pattern exists for every later phase to copy.
 
-- [ ] **Unit test** — a service rule with a mocked repository, no Spring context. Runs in milliseconds.
-- [ ] **`@WebMvcTest`** — controller slice, service mocked. Assert a bad request body produces your exact ProblemDetail JSON: right status, right `code`, field errors populated. This test locks the error contract down.
-- [ ] **`@DataJpaTest` + Testcontainers Postgres** — assert `createdAt`/`createdBy` are populated by auditing, and that a duplicate slug throws (proving the DB constraint is real, not just entity annotations).
-- [ ] ⚠️ **Trap:** `@DataJpaTest` replaces your datasource with an embedded one by default — you must stop it doing that.
-- [ ] **`@SpringBootTest` + Testcontainers, full stack, real HTTP** — POST then GET; assert 201 + `Location`, then the paginated envelope's shape.
-- [ ] 💡 **`@ServiceConnection` (Boot 3.1+)** on the container bean wires the datasource automatically, replacing the `@DynamicPropertySource` boilerplate every older tutorial shows. Use it, and know what it replaced.
-- [ ] **Flyway runs in the test container.** This is the point: migrations are now tested on every build. A broken migration fails CI, not deploy.
-- [ ] **One shared container across the suite** — a base test class, the singleton-container pattern, or reuse.
-- [ ] 📊 **Measure it:** time the suite with a container per class vs shared. Write both numbers down.
-- [ ] 💡 **Context caching:** Spring caches the `ApplicationContext` per unique configuration. Every distinct combination of profiles/mock beans/properties starts another full context. This is *the* reason slow test suites are slow, and the question that separates people who have run a real suite from people who have not.
-- [ ] ⚠️ **No H2, ever** — concrete reasons for your notes: `SELECT … FOR UPDATE` semantics (Phase 5), Postgres constraint error codes (0.7 above), real index behaviour (Phase 8). H2 gets all three wrong in ways that make tests pass and production fail.
+- [x] **Unit test** — a service rule with a mocked repository, no Spring context. Runs in milliseconds.
+- [x] **`@WebMvcTest`** — controller slice, service mocked. Assert a bad request body produces your exact ProblemDetail JSON: right status, right `code`, field errors populated. This test locks the error contract down.
+- [x] **`@DataJpaTest` + Testcontainers Postgres** — assert `createdAt`/`createdBy` are populated by auditing, and that a duplicate slug throws (proving the DB constraint is real, not just entity annotations).
+- [ ] ~~⚠️ **Trap:** `@DataJpaTest` replaces your datasource with an embedded one by default — you must stop it doing that.~~ **Corrected 2026-09-23:** outdated for Boot 3.4+. `@DataJpaTest` no longer replaces a datasource supplied by `@ServiceConnection` (verified on 3.5.16). `@AutoConfigureTestDatabase(replace = NONE)` is harmless but unnecessary. **The real `@DataJpaTest` trap is auditing** — see `TESTING_GUIDE.md`.
+- [x] **`@SpringBootTest` + Testcontainers, full stack, real HTTP** — POST then GET; assert 201 + `Location`, then the paginated envelope's shape.
+- [x] 💡 **`@ServiceConnection` (Boot 3.1+)** on the container bean wires the datasource automatically, replacing the `@DynamicPropertySource` boilerplate every older tutorial shows. Use it, and know what it replaced.
+- [x] **Flyway runs in the test container.** This is the point: migrations are now tested on every build. A broken migration fails CI, not deploy.
+- [x] **One shared container across the suite** — a base test class, the singleton-container pattern, or reuse.
+- [x] 📊 **Measure it:** time the suite with a container per class vs shared. Write both numbers down.
+- [x] 💡 **Context caching:** Spring caches the `ApplicationContext` per unique configuration. Every distinct combination of profiles/mock beans/properties starts another full context. This is *the* reason slow test suites are slow, and the question that separates people who have run a real suite from people who have not.
+- [x] ⚠️ **No H2, ever** — concrete reasons for your notes: `SELECT … FOR UPDATE` semantics (Phase 5), Postgres constraint error codes (0.7 above), real index behaviour (Phase 8). H2 gets all three wrong in ways that make tests pass and production fail.
 
-**Measured:** container-per-class `____s` → shared container `____s`
+**Measured:** 13 tests, **8s** wall-clock · **2** Postgres containers (3 before aligning `TaskflowApplicationTests` with the integration test's config)
 
 ---
 
