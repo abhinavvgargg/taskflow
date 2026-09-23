@@ -4,15 +4,14 @@ spring:
     hibernate:
       ddl-auto: validate
     show-sql: false
-
   flyway:
     clean-disabled: true
-
   application:
     name: taskflow
-
   profiles:
     active: dev
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
 
 taskflow:
   api:
@@ -23,3 +22,23 @@ server:
   error:
     include-stacktrace: never
     include-message: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include:
+          - health
+          - info
+          - metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when_authorized
+  info:
+    build:
+      enabled: true
+    git:
+      enabled: true
+      mode: simple

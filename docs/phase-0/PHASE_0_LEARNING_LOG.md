@@ -296,6 +296,8 @@ The last two are the best pair: one shows what schema validation guarantees, the
 
 ## 8. Carried debt
 
+- **§0.9 OpenAPI — deferred by choice (2026-09-23)** to learn it first. Use springdoc **2.9.1** (3.x is Boot 4). The four verified fixes are in `PHASE_0_REQUIREMENTS.md` §0.9. Until then, springdoc must **not** be on the classpath — verified that it serves Swagger UI and the spec under the `prod` profile.
+- `/actuator/info` works **only when Maven builds the app** — IntelliJ's own builder skips Maven plugin goals. Fix: Maven tool window → Lifecycle → `generate-resources` → *Execute Before Build*. Use `management.info.git.mode: simple` — `full` exposed a personal email, the build host's internal IP and the remote URL on an unauthenticated endpoint.
 - **README** — not written. Holds the API conventions, DB naming conventions, and the prod `DB_*` variable list. Outstanding since §0.1.
 - **`--debug` auto-configuration report** — not yet read. Two minutes, and it's interview question #1.
 - `@NoArgsConstructor` still public on `Organization` (`protected` is enough for JPA).

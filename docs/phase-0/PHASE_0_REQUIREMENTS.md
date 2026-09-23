@@ -229,11 +229,51 @@ The highest-leverage hour in Phase 0. Every later phase just registers exception
 
 - [ ] springdoc configured with real API info (title, version, description, contact). Every endpoint documents its success **and** error responses, referencing the ProblemDetail shape — a doc describing only happy paths is half a contract.
 - [ ] Swagger UI available in `dev`, **disabled in `prod`** (or later, secured). It is a complete map of your attack surface.
-- [ ] Actuator exposes **only** `health`, `info`, `metrics`, `prometheus`. Never `*` — `/actuator/env` and `/actuator/configprops` dump configuration, `/actuator/heapdump` dumps memory including secrets in it.
-- [ ] `management.endpoint.health.show-details=when-authorized` (so today: not shown) — health details name your database and its state.
-- [ ] Liveness and readiness probe groups enabled. 💡 Liveness failing means "restart me"; readiness failing means "stop sending me traffic, I am still alive". Conflating them causes restart loops under load.
-- [ ] **Graceful shutdown** enabled with an explicit timeout — in-flight requests finish instead of being severed mid-transaction.
+- [x] Actuator exposes **only** `health`, `info`, `metrics`, `prometheus`. Never `*` — `/actuator/env` and `/actuator/configprops` dump configuration, `/actuator/heapdump` dumps memory including secrets in it.
+- [x] `management.endpoint.health.show-details=when-authorized` (so today: not shown) — health details name your database and its state.
+- [x] Liveness and readiness probe groups enabled. 💡 Liveness failing means "restart me"; readiness failing means "stop sending me traffic, I am still alive". Conflating them causes restart loops under load.
+- [x] **Graceful shutdown** with an explicit timeout — in-flight requests finish instead of being severed mid-transaction. *(Already the default in Boot 3.4+; make the timeout an explicit decision.)*
 - [ ] `/actuator/info` populated from real build info via the build plugin — git commit and build time. "Which version is actually deployed" is the first question of every incident.
+
+---
+
+### 0.9 — additions from the session walkthrough (verified 2026-09-23 on Boot 3.5.16)
+
+**The central idea:** generated OpenAPI describes your *code's shape*, not your *contract*. Out of the box, springdoc produced a spec that was wrong four ways:
+
+| Spec said | API actually does | Fix (verified) |
+|---|---|---|
+| `GET` list takes a param `query` (object) and `sort` (object) | `?page=0&size=20&sort=name,asc` | `@ParameterObject` on **both** `PageQuery` and `Sort` → renders as `page`, `size`, `sort[]` |
+| `POST` returns 200 | returns **201** | `@ApiResponse(responseCode = "201")` — a `ResponseEntity` status is decided at runtime, so springdoc can't infer it |
+| every response `*/*` | JSON; errors `application/problem+json` | `springdoc.default-produces-media-type: application/json` |
+| **no error responses** | 400 / 404 / 409 / 500 as `ProblemDetail` | document them — your handlers return `ResponseEntity<Object>`, which gives springdoc nothing to infer from |
+
+**springdoc version: `2.9.1`.** Not managed by Boot — you pin it and you own upgrades. The **3.x line targets Boot 4** and will not work here.
+
+**Verified Boot 3.5.16 defaults:**
+
+| Property | Default | Meaning for you |
+|---|---|---|
+| `server.shutdown` | **`graceful`** | Already on since Boot 3.4 — tutorials saying "enable it" are outdated. Set the timeout explicitly as a visible decision. |
+| `spring.lifecycle.timeout-per-shutdown-phase` | `30s` | |
+| `management.endpoints.web.exposure.include` | `health` | Starts locked down — you open endpoints deliberately |
+| `management.endpoint.health.show-details` | `never` | Safe default |
+| `management.endpoint.health.probes.enabled` | `false` | Must enable (auto-on only when Kubernetes is detected) |
+| `management.info.env.enabled` | `false` | `/actuator/info` is empty until you feed it |
+
+**Boot's parent already manages `git-commit-id-maven-plugin`** with the `revision` goal writing `git.properties` — declaring it is enough.
+
+#### 🏗️ Decisions
+
+| # | Decision | Recommended |
+|---|---|---|
+| 1 | Error responses: per-endpoint `@ApiResponse` vs a global `OpenApiCustomizer` | **Per-endpoint for now** (3 endpoints, explicit). Move to a customizer when it gets repetitive (~Phase 3). |
+| 2 | `prometheus` now or later | **Later (Phase 12).** It needs `micrometer-registry-prometheus`, and there's no scraper yet — listing it without the registry silently exposes nothing. Avoid dead config. |
+| 3 | Actuator on a separate `management.server.port` | Optional. The production pattern for keeping ops endpoints off the public port. |
+
+#### ⚠️ Liveness must not depend on the database
+
+Liveness failing means *restart me*; readiness failing means *stop sending me traffic*. Put the DB check in **liveness** and a 10-second database blip restarts **every instance at once** — turning a partial outage into a total one. The DB belongs in **readiness** (or nowhere); liveness should only answer "is this process wedged?"
 
 ---
 
