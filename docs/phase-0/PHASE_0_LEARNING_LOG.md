@@ -268,7 +268,8 @@ select version, description, success from flyway_schema_history;
 ./mvnw clean compile
 ./mvnw spring-boot:run
 ./mvnw spring-boot:run -Dspring-boot.run.profiles=prod   # must FAIL: missing DB_* vars
-./mvnw spring-boot:run --debug                            # auto-configuration report
+./mvnw spring-boot:run -Dspring-boot.run.arguments=--debug   # auto-configuration report
+# NOT `./mvnw spring-boot:run --debug`: Maven takes --debug as its OWN flag (= -X) and never passes it to the app
 
 # Read Boot's own config when docs are thin
 unzip -p ~/.m2/repository/org/springframework/boot/spring-boot/3.5.16/spring-boot-3.5.16.jar \

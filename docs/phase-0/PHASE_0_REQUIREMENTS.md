@@ -233,7 +233,7 @@ The highest-leverage hour in Phase 0. Every later phase just registers exception
 - [x] `management.endpoint.health.show-details=when-authorized` (so today: not shown) — health details name your database and its state.
 - [x] Liveness and readiness probe groups enabled. 💡 Liveness failing means "restart me"; readiness failing means "stop sending me traffic, I am still alive". Conflating them causes restart loops under load.
 - [x] **Graceful shutdown** with an explicit timeout — in-flight requests finish instead of being severed mid-transaction. *(Already the default in Boot 3.4+; make the timeout an explicit decision.)*
-- [ ] `/actuator/info` populated from real build info via the build plugin — git commit and build time. "Which version is actually deployed" is the first question of every incident.
+- [x] `/actuator/info` populated from real build info via the build plugin — git commit and build time. "Which version is actually deployed" is the first question of every incident.
 
 ---
 
