@@ -30,7 +30,7 @@
 | 2 | **Package layout** | **`common/security` + `user`** | `common/security` holds the filter chain config, the principal type and the `PasswordEncoder` bean. `user` holds the entity, repository, `UserDetailsService` implementation, registration, tokens, lockout and the login endpoint. The principal type **has to live in `common`**, because `AuditAwareImpl` in `common/config` reads it and `common` never imports a feature. Same reasoning as the `ErrorCode` interface. |
 | 3 | **What the user logs in with** | **Email.** The "either" approach is studied too (see §1.2, *Logging in with either*). | Keep a separate **username** anyway. Phase 0 decision #9 says `created_by` holds a username, and Phase 9 `@mentions` need one. |
 | 4 | **Principal type** | **A separate principal record** | The principal lives in the `SecurityContext` for the whole request, outside any transaction. If it's an entity, it becomes a detached entity with lazy associations waiting to throw (Phase 3+), and a stale copy of a row. Carry only id, username, email, password hash, role and the two status flags. |
-| 5 | **System roles** | ⏳ **Open. Decide at the start of §1.2.** | Single column (`USER` / `ADMIN`) vs a join table (many roles per user). Discussed in §1.2 before the migration is written. |
+| 5 | **System roles** | **Single column** `role` (`USER` / `ADMIN`), decided 2026-09-24 | These are platform roles, one fact per user. The many-roles-per-user model belongs to org and project membership (Phases 3–4), which get their own tables. A join table would add a collection load to every Basic-authenticated request for no gain. |
 | 6 | **Login history table** | **`security_events`** with an `event_type` column | It costs the same as `login_events`, and it closes the Phase 0 "audit log has no home" debt. The login-history endpoint filters it down to login types. |
 | 7 | **Registration with an email already registered** | ⏳ **Open. Decide at the start of §1.3.** | 409 `EMAIL_ALREADY_REGISTERED` vs always 202 (plus an email to the existing owner). Discussed in §1.3. Either way, **leave the status out of the registration tests until it's decided**. |
 | 8 | **Token storage** | **One `user_tokens` table**, `purpose` constrained by a `CHECK` | The rules (hashed, expiring, single-use, invalidated on reissue) are identical for both purposes. |
@@ -91,7 +91,7 @@
 
 ## 1.2 — Users, password storage, principal, auditor (~1h)
 
-**Migration `V2__create_users.sql`.** Name every constraint (`pk_`, `uk_`, `ck_`), as in Phase 0.
+**Migration `V2__create_user_accounts.sql`, table `user_accounts`** (named 2026-09-24; entity `UserAccount` avoids a clash with Spring Security's `User`). Name every constraint (`pk_`, `uk_`, `ck_`), as in Phase 0.
 
 - [ ] `email`: NOT NULL, **unique**, `varchar(254)` (the maximum length of an SMTP address path), with a `CHECK` that it's already lowercase.
 - [ ] `username`: NOT NULL, unique, at most 50 characters (it has to fit `created_by varchar(50)`), with a `CHECK` on the allowed characters. Immutable in this phase.
@@ -130,6 +130,25 @@
 **Auditor:**
 - [ ] `AuditAwareImpl` returns the username when the current `Authentication` holds **your** principal, and `"system"` otherwise.
 - [ ] ⚠️ **Trap, create it first:** check only `authentication != null && authentication.isAuthenticated()`, then register a user. `created_by` reads **`anonymousUser`**. `AnonymousAuthenticationToken` is present on anonymous requests and **reports itself as authenticated**. Check the *principal type*, not the flag.
+
+### 1.2 — scope trimmed (2026-09-24)
+
+- **The 72-byte password check moves to §1.3.** It's boundary validation, and the registration request DTO is where it belongs.
+- **`CredentialsContainer` is optional.** The principal is a plain class (`TaskflowPrincipal`), so the default `toString()` already doesn't print the hash.
+
+### 1.2 — additions from the session walkthrough (2026-09-24)
+
+- [ ] ⚠️ **Trap: `toLowerCase()` with no argument uses the JVM's default locale.** Under a Turkish locale, `"TITLE@X.COM".toLowerCase()` gives `tıtle@x.com` (dotless ı). Always normalise with `Locale.ROOT`, and prove it with a test that sets a Turkish default locale.
+- [ ] ⚠️ **Trap: the principal's `toString()` goes into Spring Security's DEBUG logs.** On success, `BasicAuthenticationFilter` logs *"Set SecurityContextHolder to …"* with the `Authentication`, and that includes the principal's `toString()`. A record prints **every** component, **password hash included**. Override `toString` to leave the hash out.
+- [ ] 🏗️ **Erasing the credentials.** After authentication, `ProviderManager` calls `eraseCredentials()` on anything that implements `CredentialsContainer`. A record is immutable, so it can't take part. The options: a record, accepting that the hash stays in memory for the request (stateless, never stored or serialised), or a small final class that implements `CredentialsContainer`. Decide and justify.
+- [ ] ⚠️ **Trap: `{bcrypt}` prefix missing.** A hash inserted by hand without its `{id}` prefix has no encoder mapped to it. Try it once in dev, and note what the client gets back.
+- [ ] **Postgres reserves `user`**, which is one more reason the table is `user_accounts`. FKs to it follow the `<table>_id` convention in singular form: `user_account_id`.
+- [ ] **What breaks when your `UserDetailsService` appears:**
+  - Boot's generated user goes away, and so does `spring.security.user.*` in `application-test.yml`. That's now **dead config**: delete it.
+  - Integration tests must create **real users in the database**. Add a small test helper that saves a verified user with an encoded password.
+  - The organization integration test's `createdBy = "system"` assertion becomes the username.
+- [ ] **No seed users in versioned migrations.** A `V`-migration runs in prod, so a seeded admin means a known password in production. For dev, before §1.3 exists, insert a user by hand with `psql`, and promote an admin with an `UPDATE`. That's also the honest answer to "how is the first admin created?"
+- [ ] **Now testable (Phase 1 learning-log debt):** ADMIN reads `/actuator/metrics` → 200 and sees health `components`. Plus the `ROLE_` prefix: a USER → 403 and an ADMIN → 200 on metrics proves your authorities carry the prefix.
 
 🎯 **Interview questions:** "Why bcrypt and not SHA-256 for passwords, but SHA-256 and not bcrypt for reset tokens?" · "How would you migrate every user to a new hashing algorithm?" (hint: `upgradeEncoding` + `UserDetailsPasswordService`, rehash on the next successful login. Implementing it is an **optional stretch**.)
 
@@ -269,7 +288,7 @@ Patterns come from `TESTING_GUIDE.md`. What's **new** this phase:
 Check these literally, by running them.
 
 - [ ] No generated password in the startup log. The `--debug` report has been read, and the backing-off condition written down.
-- [ ] Register → the verification link is in the dev log → verify → login 200. The `users` row shows a `{bcrypt}` hash, a lowercase email, and `created_by` = `system`.
+- [ ] Register → the verification link is in the dev log → verify → login 200. The `user_accounts` row shows a `{bcrypt}` hash, a lowercase email, and `created_by` = `system`.
 - [ ] Login before verification behaves exactly as decided in §1.5.
 - [ ] N wrong passwords → locked; the correct password is still rejected; after the lock duration it works. **Also tested through Basic.**
 - [ ] Unknown email and wrong password give byte-identical response bodies (except `timestamp` and `correlationId`).
