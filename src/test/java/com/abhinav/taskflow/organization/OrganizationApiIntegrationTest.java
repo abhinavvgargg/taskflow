@@ -38,8 +38,9 @@ class OrganizationApiIntegrationTest {
 
     @Test
     void list_whenEmpty_returnsPageEnvelope() {
-        ResponseEntity<PageResponse<OrganizationResponseDto>> response = restTemplate.exchange(
-                "/api/v1/organizations?size=5", HttpMethod.GET, null,
+        ResponseEntity<PageResponse<OrganizationResponseDto>> response = restTemplate
+                .withBasicAuth("test-user", "test-password")
+                .exchange("/api/v1/organizations?size=5", HttpMethod.GET, null,
                 new ParameterizedTypeReference<>() {});
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -54,14 +55,18 @@ class OrganizationApiIntegrationTest {
         var request = new OrganizationRequestDto("Acme Corp", "acme-corp");
 
         ResponseEntity<OrganizationResponseDto> created =
-                restTemplate.postForEntity("/api/v1/organizations", request, OrganizationResponseDto.class);
+                restTemplate
+                        .withBasicAuth("test-user", "test-password")
+                        .postForEntity("/api/v1/organizations", request, OrganizationResponseDto.class);
 
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         URI location = created.getHeaders().getLocation();
         assertThat(location).isNotNull();
 
         ResponseEntity<OrganizationResponseDto> fetched =
-                restTemplate.getForEntity(location, OrganizationResponseDto.class);
+                restTemplate
+                        .withBasicAuth("test-user", "test-password")
+                        .getForEntity(location, OrganizationResponseDto.class);
 
         assertThat(fetched.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(fetched.getBody()).isNotNull();
@@ -73,10 +78,14 @@ class OrganizationApiIntegrationTest {
     @Test
     void create_duplicateSlug_returns409ProblemDetail() {
         var request = new OrganizationRequestDto("Acme Corp", "acme-corp");
-        restTemplate.postForEntity("/api/v1/organizations", request, Void.class);
+        restTemplate
+                .withBasicAuth("test-user", "test-password")
+                .postForEntity("/api/v1/organizations", request, Void.class);
 
         ResponseEntity<ProblemDetail> response =
-                restTemplate.postForEntity("/api/v1/organizations", request, ProblemDetail.class);
+                restTemplate
+                        .withBasicAuth("test-user", "test-password")
+                        .postForEntity("/api/v1/organizations", request, ProblemDetail.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getHeaders().getContentType()).isEqualTo(MediaType.APPLICATION_PROBLEM_JSON);
