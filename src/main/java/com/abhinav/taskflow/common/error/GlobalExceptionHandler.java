@@ -2,7 +2,6 @@ package com.abhinav.taskflow.common.error;
 
 import com.abhinav.taskflow.common.logging.CorrelationIdFilter;
 import lombok.extern.slf4j.Slf4j;
-import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
@@ -34,7 +33,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<Object> handleDataIntegrityViolation(DataIntegrityViolationException ex, WebRequest request)
     {
-        String constraint = constraintNameOf(ex);
+        String constraint = CommonErrorUtility.constraintNameOf(ex);
         log.warn("Constraint violation [constraint={}]", constraint, ex);
 
         return problem(ex, CommonErrorCode.RESOURCE_CONFLICT, "The request conflicts with existing data", constraint == null ? Map.of() : Map.of("constraint", constraint), request);
@@ -109,15 +108,6 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         body.setTitle(errorCode.title());
         properties.forEach(body::setProperty);
         return handleExceptionInternal(ex, body, new HttpHeaders(), errorCode.status(), request);
-    }
-
-    private String constraintNameOf(DataIntegrityViolationException ex) {
-        for (Throwable cause = ex.getCause(); cause != null; cause = cause.getCause()) {
-            if (cause instanceof ConstraintViolationException constraintViolation) {
-                return constraintViolation.getConstraintName();
-            }
-        }
-        return null;
     }
 
     private String pathOf(WebRequest request) {

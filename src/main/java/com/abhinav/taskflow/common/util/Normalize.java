@@ -9,4 +9,8 @@ public final class Normalize {
     public static String normalizeEmail (String raw) {
         return raw == null ? null : raw.strip().toLowerCase(Locale.ROOT);
     }
+
+    public static String normalizeUsername (String raw) {
+        return raw == null ? null : raw.strip().toLowerCase(Locale.ROOT);
+    }
 }

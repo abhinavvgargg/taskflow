@@ -1,6 +1,6 @@
 # Phase 1 — Revision & Learning Log
 
-> Updated after every sub-phase. **Last updated 2026-09-25, covering §1.1–§1.2** (filter chain · users, passwords, principal, auditor).
+> Updated after every sub-phase. **Last updated 2026-09-25, covering §1.1–§1.3** (filter chain · users, passwords, principal, auditor · registration).
 > Companions: `PHASE_1_REQUIREMENTS.md` (what to build) · `SECURITY_TESTING_GUIDE.md` (how the rules are tested) · `../phase-0/PHASE_0_LEARNING_LOG.md` (the foundations this builds on).
 
 ---
@@ -15,14 +15,19 @@
 | 4 | Principal type | **A separate class** (`TaskflowPrincipal`), not the entity. Built as a plain class rather than a record. | It lives in the `SecurityContext` outside any transaction; an entity there is a detached, stale row with lazy associations waiting to throw. |
 | 5 | System roles storage | **Single column** `role` (`USER` / `ADMIN`) | Platform roles are one fact per user. The many-roles-per-user model belongs to org/project membership (Phases 3–4). A join table would add a collection load to every Basic-authenticated request. |
 | 6 | Login history table | **`security_events`** with `event_type` | Same cost as `login_events`, and it closes the Phase 0 "security audit log has no home" debt. |
-| 7 | Duplicate email at registration | ⏳ **Open**, decide at the start of §1.3 | 409 vs always-202. |
+| 7 | Duplicate email at registration | **409 `EMAIL_ALREADY_REGISTERED`** | Clear for a person who forgot they have an account. Knowingly lets *this* endpoint reveal registered emails; login and reset must not, and Phase 10 rate limiting blunts probing. Always-202 would need the §1.4 sender first and confuses honest users. |
 | 8 | Token storage | **One `user_tokens` table**, `purpose` + `CHECK` | The rules are identical for verification and reset. |
 | 9 | Name of the security config / chain bean | `TaskflowSecurityConfig` / `taskflowSecurityFilterChain` | Not `defaultSecurityFilterChain`, which is Boot's own default bean name, and Phase 10 adds a second chain. |
 | 10 | Health endpoint access | **Endpoint public, details `ADMIN`-only** | Probes are anonymous; details (DB vendor, disk path) are reconnaissance. Restrict the *details*, not the *endpoint*. |
 | 11 | Users table / entity name | **`user_accounts`** / **`UserAccount`** | `user` is reserved in Postgres, and `User` clashes with Spring Security's class. FKs to it will be `user_account_id`. |
 | 12 | Credential erasure (`CredentialsContainer`) | **Not implemented** | A plain class's default `toString()` doesn't print the hash, and the stateless context is never stored or serialised. |
 | 13 | Creating test users | **`TestUsers`, a plain helper class, not a bean**. ADMIN promotion and locking done with SQL. | Registering a helper bean changes the context configuration and starts a second application + container. SQL mirrors how a real first admin is created. |
-| 14 | 72-byte password check | **Moved to §1.3** | It's boundary validation, and the registration DTO is where it lives. |
+| 14 | 72-byte password check | **`@MaxUtf8Bytes(72)`**, a custom constraint in `common/validator` (built in §1.3) | `@Size` counts UTF-16 units, not bytes; the encoder's own check is a 500. Reusable by §1.6's reset and change requests. |
+| 15 | Password policy | **At least 12 characters, at most 72 UTF-8 bytes, no composition rules** | Length is what makes passwords strong (NIST SP 800-63B); 12 sits between the old floor of 8 and NIST's newer 15. |
+| 16 | Username case | **Any case accepted, lowercased in the service** (`Normalize.normalizeUsername`) | Same rule as the email: `Alice` / `alice` can't be two accounts, and mobile auto-capitalisation doesn't fail sign-ups. |
+| 17 | Registration response | **201 with the account body, no `Location`** | There's no `GET /users/{id}` (users can't read each other). A `Location` pointing at an unreadable URL would invite someone to add a user-lookup endpoint. |
+| 18 | Race translation | **`saveAndFlush` in the service, translated by constraint name inside `user`**; the generic "read the constraint name" helper (`CommonErrorUtility`) in `common` | The race gets the same specific 409 as the normal path, and `common` still knows nothing about user tables. |
+| 19 | §1.3 automated tests | **Deferred** (2026-09-25, user's call, to keep moving) | Recorded as debt: nothing yet protects the §1.3 fixes from regressing. |
 
 ---
 
@@ -31,6 +36,7 @@
 | § | Built | Key artifacts |
 |---|---|---|
 | **1.1** | Security starter, one filter chain, deny-by-default URL rules, stateless Basic, CSRF and logout off, health details restricted, security tests | `TaskflowSecurityConfig`, `management.endpoint.health.roles`, `TaskflowSecurityConfigTest` (19-row slice), `TaskflowSecurityIntegrationTest` |
+| **1.3** | `POST /api/v1/auth/register`: validation (incl. a byte-length constraint), normalisation, duplicate checks, bcrypt, the race translated to the same 409s, 201 with an account summary | `AuthController`, `RegisterRequest` (masked `toString`), `UserAccountResponse`, `UserErrorCode`, `UserRegistrationService`, `MaxUtf8Bytes` + `MaxUtf8BytesValidator`, `ValidationMessages.properties`, `CommonErrorUtility`, `Normalize.normalizeUsername`, repository `existsBy…` |
 | **1.2** | `user_accounts` schema, `UserAccount` entity, `DelegatingPasswordEncoder`, `Clock` bean, `TaskflowPrincipal`, `TaskflowUserDetailsService` (Basic now checks real users), email normalisation, auditor writes the app username | `V2__create_user_accounts.sql`, `UserAccount`, `UserRole`, `UserAccountRepository`, `TimeConfig`, `Normalize`, `TaskflowPrincipal`, `TaskflowUserDetailsService`, `AuditAwareImpl`; tests: `TestUsers`, `TaskflowUserDetailsServiceTest`, `AuditAwareImplTest`, `NormalizeTest`, `UserAccountRepositoryTest` |
 
 **Working end to end (verified with curl and tests):**
@@ -45,6 +51,9 @@
 - *(§1.2)* An admin (`role = 'ADMIN'`) reads `/actuator/metrics` and sees health `components`; a user gets 403 / no details.
 - *(§1.2)* `created_by` records the caller's **app username** (`alice`), not their email; `"system"` when nobody is logged in.
 - *(§1.2)* Boot's generated password is gone from the startup log.
+- *(§1.3, verified by manual run)* Anonymous `POST /api/v1/auth/register` → **201** with `{id, email, username, displayName, emailVerified: false, createdAt}` and no `Location`; stored lowercase, `{bcrypt}` hash, `created_by = system`.
+- *(§1.3)* Duplicate email in any case → **409 `EMAIL_ALREADY_REGISTERED`** (`field: email`); duplicate username → **409 `USERNAME_TAKEN`**; both → the email code. Bad input → **400** with `fieldErrors`, password never echoed; 19 emoji → 400 with the custom byte message.
+- *(§1.3)* A newly registered account can't log in (401) until `email_verified_at` is set; verified by hand with SQL (§1.4 automates it).
 
 **Commits:** `9211684` (§1.1 code) · `56340ae` (docs).
 
@@ -120,6 +129,31 @@ MockMvc never performs the `ERROR` dispatch, so the slice shows the raw 403. **S
 - **The table has no id default.** Use `nextval('global_id_seq')`, the sequence Hibernate uses. A manually taken value is never handed out again, so there's no collision.
 - **`psql -c "…"` corrupts bcrypt hashes.** Inside double quotes the shell expands `$2y`, `$10` and so on. Paste into an interactive `psql` instead.
 
+### §1.3: registration
+
+**Found in code review, before the first run:**
+
+| Bug | What would have happened |
+|---|---|
+| **Duplicate checks used the raw input**, while the insert used the normalised values | `Alice@Example.com` passed the check, bcrypt ran for nothing, and only the **unique constraint** produced the 409. The normal path was secretly running on the race path. With both email and username taken in mixed case, whichever unique index Postgres checked first decided the code, so `USERNAME_TAKEN` could replace `EMAIL_ALREADY_REGISTERED`. *Fix:* normalise once at the top, and use those values everywhere. |
+| **`ValidationMessage.properties`** (singular) | Hibernate Validator only loads **`ValidationMessages.properties`**. The 400 would have read literally `{com.abhinav.taskflow.common.validator.MaxUtf8Bytes.message}`. |
+| **200 instead of 201** | `ResponseEntity.ok(...)` on a create. |
+| **`UserAccountResponse.from` hard-coded `emailVerified: false`** | Correct at registration, wrong for every verified user once §1.7's `/me` reuses the mapper. |
+| **`displayName` with `@Size(min = 3)`** | Rejects real names: "Li", "Jo", 王. |
+| **No `field` property on the 409** | The client can't tell which input to highlight. |
+
+**The encoder and 72 bytes, verified (not assumed).** With `@Size(max = 72)` in place of `@MaxUtf8Bytes`, the first attempt with "19 emoji" showed **no error**. The reproduction (a password built with `python3 -c 'print("\U0001F600"*19)'`, byte count checked with `wc -c` → 76, fresh email and username) gave the expected **500**. The first attempt most likely didn't reach the encoder: either a duplicate email or username (checked *before* hashing, so a 409) or an unchanged running app. Running the same passwords against the project's jar and an older one:
+
+| Password | `length()` | UTF-8 bytes | spring-security-crypto **6.5.11** (ours) | **6.3.1** (older) |
+|---|---|---|---|---|
+| 72 × `a` | 72 | 72 | encoded | encoded |
+| 73 × `a` | 73 | 73 | `IllegalArgumentException: password cannot be more than 72 bytes` | encoded |
+| 19 × 😀 | **38** | **76** | same exception | encoded |
+
+On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hashed, and `matches("18 emoji + a-totally-different-ending", hash)` returned **true**, because everything after byte 72 is ignored. Current versions refuse instead of truncating. So on our version, `@MaxUtf8Bytes` turns a 500 into a clean 400; on an old version it would be the only guard against silent truncation. Also note: `@Size(max = 72)` counts **UTF-16 units** (an emoji is 2), not characters and not bytes.
+
+**Two temporary deliberate-failure edits were still in the code at wrap-up:** `@Size(max = 72)` instead of `@MaxUtf8Bytes(72)`, and `log.info("Registering {}", registerRequest)`, which still logs the **email** (PII) at INFO even with the password masked. They need reverting before commit. ⚠️ The general lesson: after a deliberate failure, check the diff for leftovers.
+
 ### Found along the way
 
 **`LogoutFilter` is on by default** and appeared in the filter list without being asked for. It handles `/logout` **before** `AuthorizationFilter`, so `denyAll()` doesn't govern it. Disabled; `/logout` now falls to `denyAll` (verified: 401 / 403). Phase 2 builds the real logout.
@@ -156,6 +190,14 @@ MockMvc never performs the `ERROR` dispatch, so the slice shows the raw 403. **S
 | *(§1.2)* **No seed users in `V`-migrations**; first admin by `UPDATE` | A known admin password shipped to production |
 | *(§1.2)* **Security context cleared in `@AfterEach`** in tests that set it | A ThreadLocal user leaking into the next test on a reused thread |
 | *(§1.2)* **The shared test password is bcrypt-hashed once**, not per user | A slow suite: bcrypt costs ~50–100 ms per hash by design |
+| *(§1.3)* **Validation before hashing**; duplicate checks before hashing too | Every malformed or duplicate request burning ~100 ms of CPU: a cheap CPU-exhaustion attack on sign-up |
+| *(§1.3)* **Byte-length limit (`@MaxUtf8Bytes(72)`) at the boundary** | A 500 from the encoder on current versions; **silent truncation** (a different password logging in) on older ones |
+| *(§1.3)* **Masked `toString()` on request records holding secrets** | Plaintext passwords in logs from one careless log line (demonstrated) |
+| *(§1.3)* **Normalise once, then check and insert with the same values** | Checks that miss duplicates and leave the constraint to catch them; the wrong 409 code when both fields clash |
+| *(§1.3)* **`saveAndFlush` + translation by constraint name, in the feature** | The race returning a different, generic code (and the constraint name) from the normal path |
+| *(§1.3)* **409 names the `field`, never echoes the value** | Emails copied into error bodies, client logs and error trackers |
+| *(§1.3)* **201 without a `Location` for a resource the caller can't read** | Advertising a URL that doesn't exist, and inviting a user-lookup endpoint |
+| *(§1.3)* **Response DTO with only public fields; `emailVerified` derived, not hard-coded** | Hash, lock state or attempts leaking; a mapper that's wrong the day it's reused |
 
 ---
 
@@ -220,7 +262,20 @@ MockMvc never performs the `ERROR` dispatch, so the slice shows the raw 403. **S
 - **The auditor's test** puts an `Authentication` into `SecurityContextHolder` exactly as Spring would, and clears it in `@AfterEach`.
 - **The JPA test** reads `role` with a **native query**, the only way to prove it's stored as text: through JPA, `ORDINAL` and `STRING` both look like `UserRole.USER`.
 
+**§1.3 — Registration.**
+
+*The shape:* the organization create flow from Phase 0 (controller → service → repository) plus three security additions: a byte-length password rule, a masked `toString()`, and race translation.
+
+*A custom Bean Validation constraint* is an annotation (`@Constraint(validatedBy = …)`, with `message`, `groups`, `payload`) plus a `ConstraintValidator` class. Hibernate Validator finds the validator through the annotation. `null` counts as valid by convention (presence is `@NotBlank`'s job), so each constraint checks one thing. Custom messages live in **`ValidationMessages.properties`** (plural), keyed by the annotation's `{…}` template.
+
+*When the INSERT runs:* `save()` puts the entity in the persistence context; the SQL runs at flush, normally at commit, **after the service method returns**, so a constraint violation escapes any `try` inside it. `saveAndFlush()` runs it inside the `try`. The exception arrives as Spring's `DataIntegrityViolationException` (translated at the repository proxy), with Hibernate's `ConstraintViolationException` and the constraint name in its cause chain. After a failed flush the transaction is rollback-only: translate and throw.
+
+*Characters, UTF-16 units and bytes are three different counts.* `"😀".length()` is **2** (a surrogate pair), and it's **4** bytes in UTF-8. `@Size` counts `length()`. bcrypt counts bytes.
+
+*Enumeration, both halves:* registration reveals registered emails by design (decision 7); login and reset must never reveal them (§1.5, §1.6).
+
 📊 **Measured:**
+- *(§1.3)* The existing suite stays green after the §1.3 changes (76/76, including `GlobalExceptionHandler`'s refactor to `CommonErrorUtility`). **No §1.3 tests yet** (decision 19).
 - *(§1.2)* Suite: **45 → 76 tests**, all green, **9.4s** wall-clock, **2** Postgres containers (one per context type: `@SpringBootTest` and `@DataJpaTest`). The new classes reused existing contexts (JPA test 0.07s, security integration test 1.1s).
 - *(§1.2)* **7/7** planted bugs turned the suite red (table in §7). Mapping `role` as `ORDINAL` was caught **before any test ran**: `ddl-auto: validate` refused to start every database-backed context (32 errors).
 - Suite: **13 → 45 tests**, all green.
@@ -258,12 +313,19 @@ MockMvc never performs the `ERROR` dispatch, so the slice shows the raw 403. **S
 23. **How do you test code that depends on the current time?** Inject a `Clock`; tests use `Clock.fixed` and test the exact boundary instant.
 24. **Your column has `DEFAULT 'USER'`, yet the insert failed with a NOT NULL error. Why?** Hibernate sends every mapped column, including unset ones as `NULL`; defaults only apply to inserts that omit the column.
 25. **How is the first admin created?** By hand: an `UPDATE` in the database, never a seed user in a versioned migration (that would ship a known password to production).
+26. **Does your registration endpoint leak which emails have accounts?** Yes, knowingly: 409 is the clearer experience, and rate limiting (Phase 10) blunts probing. Login and reset give identical answers for known and unknown emails.
+27. **Why can't you use `@Size(max = 72)` for a bcrypt password?** `@Size` counts UTF-16 units; bcrypt counts bytes. 19 emoji are 38 units but 76 bytes. On our version the encoder throws (a 500); on older ones everything past byte 72 was silently ignored, so a different password could log in (verified on 6.3.1).
+28. **How could a password end up in your logs?** A record's generated `toString()` prints every component, so one `log.info("{}", request)` does it (demonstrated). Override `toString()` on request records holding secrets.
+29. **Two people register the same email at the same instant. What happens?** Both can pass the service check. The unique constraint stops the second; `saveAndFlush` makes that happen inside the `try`, so it's translated to the same `EMAIL_ALREADY_REGISTERED`. With plain `save()` it would surface at commit as a generic `RESOURCE_CONFLICT`. *(Reasoned from the code; the 20-way race hasn't been run yet.)*
+30. **Why does registration return 201 without `Location`?** There's no URL the caller can read the new user at; advertising one would be wrong and would invite a user-lookup endpoint.
+31. **Why normalise before checking for duplicates, not just before saving?** Otherwise the check misses case variants, the constraint does the work, and when two fields clash the wrong error code can win.
 
 ### Not answerable yet
 
 - Design a password-reset token. — §1.4 / §1.6
 - How does your lockout survive a failed authentication rolling back? — §1.5
 - Why SHA-256 for tokens but bcrypt for passwords? — §1.4 (half-answered: bcrypt is salted, so it can't be looked up by hash)
+- The measured outcome of the registration race (`save` vs `saveAndFlush`). — §1.3 debt
 
 ---
 
@@ -304,6 +366,19 @@ update user_accounts set role = 'ADMIN' where username = 'alice';               
 update user_accounts set locked_until = now() + interval '10 minutes' where username = 'alice';   -- lock
 ```
 
+Registration and the 72-byte check (§1.3):
+
+```bash
+curl -s -i -H 'Content-Type: application/json' \
+  -d '{"email":"Carol@Example.com","username":"Carol","displayName":"Carol","password":"carol-password-1"}' \
+  localhost:8080/api/v1/auth/register                                    # 201; stored lowercase
+P=$(python3 -c 'print("\U0001F600"*19)'); printf '%s' "$P" | wc -c      # 76 bytes, 38 UTF-16 units
+```
+
+```sql
+update user_accounts set email_verified_at = now() where username = 'carol';   -- verify by hand until §1.4
+```
+
 Logging switches for one-off investigation (dev only; switch them off again):
 - `org.springframework.security.web.DefaultSecurityFilterChain: DEBUG` prints the filter list at startup.
 - `org.springframework.security: TRACE` follows one request filter by filter.
@@ -319,6 +394,9 @@ Logging switches for one-off investigation (dev only; switch them off again):
 | `EndpointRequest.to("health/**")` | **Every GET** → 500; startup clean |
 | `anonymous()` instead of `permitAll()` | Logged-in caller → 403 on `/actuator/health` |
 | *(§1.2)* Auditor using `authentication.getName()` | `created_by = alice@example.com`: the login email in an audit column |
+| *(§1.3)* `RegisterRequest` without a `toString()` override, logged with `log.info("Registering {}", request)` | **The plaintext password in the app log** |
+| *(§1.3)* `@Size(max = 72)` instead of `@MaxUtf8Bytes(72)`, 19 emoji (76 bytes) | **500**, `IllegalArgumentException: password cannot be more than 72 bytes` from the encoder. With `@MaxUtf8Bytes` restored: a clean 400. (A first attempt showed no error, most likely a duplicate stopping it before hashing, or a stale app.) |
+| *(§1.3, not run yet)* 20 concurrent registrations, same email, `save()` vs `saveAndFlush()` | Expected: generic `RESOURCE_CONFLICT` responses with `save()`, none with `saveAndFlush()` |
 
 **Mutation checks: each bug planted in a scratch copy; every one turned the suite red.**
 
@@ -349,13 +427,14 @@ Logging switches for one-off investigation (dev only; switch them off again):
 
 ## 8. Carried debt
 
-- **Decision 7 (duplicate-email response)**: settle at the start of §1.3.
-- **The 72-byte password check**: moved to §1.3 (the registration DTO).
+- ⚠️ **Revert the deliberate-failure leftovers before committing §1.3:** `@Size(max = 72)` → `@MaxUtf8Bytes(72)` in `RegisterRequest`, and delete `log.info("Registering {}", registerRequest)` (it logs the email at INFO).
+- **§1.3 tests (decision 19)**: none written. Planned: the validator (72/73 bytes, emoji, `null`), masked `toString()`, the service with fakes (normalise before checks, nothing saved on a duplicate, hash never raw, race translation), a web slice (201, 400 without the password echoed, 19 emoji → 400), and integration (stored form, duplicates in any case, unverified → 401). This also leaves the Phase 0 "never echo `rejectedValue`" debt without its test.
+- **§1.3 deliberate failure #3 (the 20-way race)**: not run. The command is in `PHASE_1_REQUIREMENTS.md` §1.3.
 - **401/403 bodies are Boot's error JSON, not `ProblemDetail`**: Phase 2 (`AuthenticationEntryPoint`, `AccessDeniedHandler`).
 - **OpenAPI**: still deferred; do it after Phase 2 so the security scheme is documented once. `/v3/api-docs` and `/swagger-ui` must be permitted in `dev` only.
 - **The CSRF comment** in `TaskflowSecurityConfig` runs two ideas together. Reword.
 - `org.springframework.security: TRACE` is left **commented** in `application-dev.yml`. Harmless; delete when tidying.
 - 📊 **bcrypt timing** at cost 10 vs 12: not measured yet.
-- **Nits in §1.2 code:** unused `UserDetails` import in `AuditAwareImpl`; the private `setRole` / `setTimezone` in `UserAccount` are now unused (the constructor assigns directly).
+- **Nits in §1.2 code (still there):** unused `UserDetails` import in `AuditAwareImpl`; the private `setRole` / `setTimezone` in `UserAccount` are unused (the constructor assigns directly).
 - **README**: auth endpoints and the Basic-auth note are due by the end of Phase 1 (definition of done).
 - From Phase 0, still open: the `Organization` no-arg constructor should be `protected` (`UserAccount`'s already is).

@@ -97,36 +97,83 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 
 ---
 
-## 3. Working agreement (how the new chat must operate)
+## 3. Working agreement (how every chat must operate)
 
-**The build loop, per phase:**
-1. Explain the concepts needed, briefly, with the *why*.
-2. Give **requirements, not code** — what to build and the rules it must satisfy.
-3. I implement it.
-4. I share the code; review it like a senior dev: bugs, better approaches, edge cases, and the interview questions it invites.
-5. If I'm stuck: **hints first**, full solution only if I really need it.
+> Updated 2026-09-25: the original loop, merged with everything agreed during Phases 0–1. Follow it for the rest of the project.
 
-**Two standing asks, on every feature:**
-- **Name every production-grade practice as we apply it**, and say what it prevents — don't silently do it right.
+### 3.1 The build loop, per sub-phase (§N.x)
+
+1. **Brief the sub-phase** in this order, both in chat and in `docs/phase-N/PHASE_N_REQUIREMENTS.md`:
+   1. **What we're building.** The feature in plain words: what it does for a user, and what's in and out of scope (and where the "out" items go).
+   2. **How we're building it, and why.** The moving parts, and two tables:
+      - **The choices**: for each, the problem it solves and what it avoids.
+      - **Alternatives we didn't take**: for each, **why we didn't take it**, and **the concrete problem it would cause later** (in which phase, for whom, how it would show up). "It's worse" isn't enough; name the failure.
+   3. **What we're optimising for.** The qualities we trade other things for.
+   4. **Concepts** 💡, each with its *why*.
+   5. **Requirements**: what to build and the rules it must satisfy, as a checklist. **Requirements, not code.**
+   6. **Traps** ⚠️, as their own section, never folded into the tables above. Traps actually hit are kept and marked *(Hit)*.
+   7. **Deliberate failures**: a *create this / what you'll see / lesson* table, referenced from the build-order steps where each one belongs.
+   8. **Build order.**
+   9. **Tests**: what each test must prove.
+
+   Open 🏗️ **decisions come first**: options plus a recommendation. I choose, or defer to "when it's time", in which case it's raised again at the start of the sub-phase that needs it. Every decision is recorded, with its date and reasoning, in the phase's Decisions table.
+2. **I implement it.**
+3. **Review.** I share the code; you review it like a senior dev:
+   - bugs first, each with the concrete failure it causes
+   - then better approaches, edge cases, and the interview questions it invites
+   - split into **must-fix** and **nits**
+   - when I say "just check the code", read it only: don't run the app or tests.
+4. **Run it.** Give me the sequence: commands, the SQL to set up data, and a table of requests with expected results. I run it and report back.
+5. **Tests.** By default I write them, using the guides. If I ask, you write them **and explain them**: how to read them, and what each one proves. Either way, every test is **mutation-checked**: plant the bug, and the test must go red. A test that can't fail doesn't count.
+6. **Wrap up.** You update `PHASE_N_LEARNING_LOG.md` for the sub-phase and tick the requirements. I commit.
+7. **If I'm stuck:** hints first, the full solution only if I really need it.
+
+### 3.2 Two standing asks, on every feature
+
+- **Name every production-grade practice as we apply it**, and say what it prevents. Don't silently do it right.
 - **Flag every concept that tutorials/basic courses skip.** State the **requirement** (what forced us here) → the **why** (what it buys us) → then the how.
 
-**Inline tags to use:**
+### 3.3 Inline tags
+
 | Tag | Meaning |
 |---|---|
 | 💡 **Concept** | A framework idea worth understanding properly, with the why |
-| ⚠️ **Trap** | A common mistake with real consequences — often let me create the bug first and see it |
+| ⚠️ **Trap** | A common mistake with real consequences. Often let me create the bug first and see it (→ Deliberate failures). |
 | 🔍 **Look inside** | Read the Spring source or turn on debug logging here |
-| 🎯 **Interview question** | A question I'll be asked about this exact code — write the answer down now |
-| 🏗️ **Design decision** | A trade-off with no single right answer; present options, I choose and justify |
-| 📊 **Measure it** | Don't assume — count queries, time the request, compare before/after |
+| 🎯 **Interview question** | A question I'll be asked about this exact code: write the answer down now |
+| 🏗️ **Design decision** | A trade-off with no single right answer: present options, I choose and justify |
+| 📊 **Measure it** | Don't assume: count queries, time the request, compare before/after |
 
-**Discipline rules:**
+### 3.4 How claims get verified
+
+- **Verify, don't assume.** Framework behaviour is checked against the source (the `-sources.jar` files in `~/.m2`) or with an experiment, not stated from memory. Say what was verified and what's inferred.
+- **Experiments never touch my work.** Use scratch copies of the project, SQL inside a **rolled-back** transaction, or a spare port. Clean up afterwards, and say what was created (e.g. a test row left in my dev database).
+- **Mistakes in your own docs are named as yours** (e.g. shorthand in a requirements table that caused a bug) and fixed in the doc.
+
+### 3.5 Documents
+
+| File | Holds | Updated |
+|---|---|---|
+| `docs/PROJECT_CONTEXT.md` | This file: goals, plan, working agreement, standards | When decisions change |
+| `docs/phase-N/PHASE_N_REQUIREMENTS.md` | Dated Decisions table, phase-level concepts, one section per sub-phase in the §3.1 layout, ticked as done | Before and after each sub-phase |
+| `docs/phase-N/PHASE_N_LEARNING_LOG.md` | Same structure as Phase 0's: decisions, what we covered, challenges, practices and what they prevent, learning per stage, interview questions (answerable now / not yet), commands, deliberate failures and mutation results, carried debt | **After every sub-phase**, by you. Only verified facts and measured numbers. |
+| Guides (`phase-0/TESTING_GUIDE.md`, `phase-1/SECURITY_TESTING_GUIDE.md`, …) | Patterns to copy, with verified behaviour | When a new kind of test appears |
+
+**When a document is restructured, nothing is dropped**, above all the traps and deliberate failures.
+
+### 3.6 When it gets heavy
+
+- If I say I'm overwhelmed, give me a short status: **done / must-fix / nits / what's left, in order**. Propose moving non-essential items to a later sub-phase (and record the move in the doc) instead of adding more.
+- Explain what the current step needs; defer the rest to where it's used.
+
+### 3.7 Discipline rules
+
 - Time-box each phase. At 150% of the estimate, ship what works and move on.
 - No polishing: no refactoring for elegance, no chasing 100% coverage.
 - Never skip DSA for the project.
-- After each phase I write 15 min of notes: what I built, what confused me, what I learned. These become interview stories.
+- After each phase I write 15 min of notes: what I built, what confused me, what I learned. These become interview stories. (The learning log is the detailed record; the notes are my own words.)
 - Keep the README current from week 1.
-- Small, meaningful commits per feature.
+- **Git:** small, meaningful commits, about one per sub-phase or feature. **I commit and push**; you commit only when asked. Stage files **by name**, never `commit -a`, because unrelated doc edits get swept in.
 
 ---
 
@@ -210,4 +257,4 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 ## 9. First message for the new chat
 
-> Read `docs/PROJECT_CONTEXT.md`. Follow the working agreement in section 3. Let's start **Phase 0** — give me the requirements, not the code.
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3. Then read the current phase's `docs/phase-N/PHASE_N_REQUIREMENTS.md` and `PHASE_N_LEARNING_LOG.md`, and the testing guides. We're on **§N.x** — brief it in the section 3.1 layout; requirements, not code.
