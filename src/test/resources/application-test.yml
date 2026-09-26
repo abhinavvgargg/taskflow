@@ -1,0 +1,4 @@
+# Test-profile settings (used by tests with @ActiveProfiles("test")). Lives in src/test, so it never ships in the jar.
+taskflow:
+  app:
+    frontend-base-url: http://localhost:3000
