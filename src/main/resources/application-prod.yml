@@ -11,3 +11,7 @@ logging:
   structured:
     format:
       console: ecs
+
+taskflow:
+  app:
+    frontend-base-url: ${FRONTEND_BASE_URL}
