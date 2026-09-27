@@ -37,7 +37,7 @@
 | 9 | **Password minimum length** (§1.3) | **12 characters**, max 72 UTF-8 bytes, no composition rules, decided 2026-09-25 | Length is what makes a password strong. 12 sits between the traditional 8 and NIST's newer 15 for password-only login. The byte cap is bcrypt's real limit. |
 | 10 | **Username case** (§1.3) | **Any case accepted, lowercased in the service**, decided 2026-09-25 | Same rule as the email, so `Alice` and `alice` can't be two accounts, and mobile auto-capitalisation doesn't cause failed sign-ups. The DB `CHECK` guards the stored form. |
 | 11 | **Token in the email link** (§1.4) | **URL fragment** (`#token=…`), decided 2026-09-26 | Never sent to a server: not in access logs, proxy logs or `Referer`. The frontend reads it and POSTs it. |
-| 12 | **Old tokens on reissue** (§1.4) | **Deleted** (same user, same purpose, unused) | Only the latest link works, and the table doesn't grow per resend. The history of security actions belongs in `security_events` (§1.5). |
+| 12 | **Old tokens on reissue** (§1.4) | **Revoked** (`revoked_at` set), plus a **partial unique index**: at most one active token per user and purpose. *Changed 2026-09-26 from "deleted".* | The database itself guarantees only one live link, and the rows keep their history. Costs: the table grows until Phase 9's cleanup job (`deleteExpiredBefore` exists for it), and two concurrent issues for one user can violate the index, so resend must turn that into its normal 202. |
 | 13 | **"Send after commit"** (§1.4) | **A separate, non-transactional `RegistrationWorkflow` bean** | Explicit and testable; avoids self-invocation. Phase 9 replaces it with `@TransactionalEventListener(AFTER_COMMIT)`. |
 | 14 | **Email verification token lifetime** (§1.4) | **24 hours** (typed config) | Long enough for "I'll do it tonight"; the token is single-use and purpose-bound. |
 | 15 | **Email fails after the account is saved** (§1.4) | **Log at ERROR (account id only), still 201** | The account exists; resend is the recovery path. Rolling back would need the send inside the transaction, which brings back the phantom email. |
@@ -558,7 +558,7 @@ Run it once with `save()` (restart first), once with `saveAndFlush()` using `rac
 
 ---
 
-## 1.4 — Email verification (~2h, tests included)
+## 1.4 — Email verification ✅ built (tests deferred; decision 12 changed to revoke; see the learning log)
 
 ### What we're building
 
@@ -605,7 +605,7 @@ VERIFY    POST /api/v1/auth/verify-email  { "token": "…" }
         WHERE token_hash = sha256(token) AND purpose = EMAIL_VERIFICATION
           AND used_at IS NULL AND expires_at > now          ← now from the Clock, passed in
      1 row → mark the account verified → 204
-     0 rows → 400 TOKEN_INVALID  (unknown, expired, already used, wrong purpose: one answer)
+     0 rows → 400 INVALID_TOKEN  (unknown, expired, already used, wrong purpose: one answer)
 
 RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
   → always 202. Only if the account exists AND is unverified: issue a new token, send after commit.
@@ -624,7 +624,7 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 | **Issuing a new token deletes the old unused ones** (same user, same purpose) | Only the latest link works; the table doesn't grow per resend |
 | **Consume with one conditional `UPDATE` and check the row count** | Two clicks at the same instant can't both succeed. Harmless for verification, but in §1.6 it would mean one reset link used twice. |
 | **"Now" from the `Clock`, passed into the `UPDATE`** | One time source, so expiry is testable with a fixed clock |
-| **One error for every bad token: `400 TOKEN_INVALID`** | The client's next step is the same in every case (ask for a new link), and no hint of which tokens exist |
+| **One error for every bad token: `400 INVALID_TOKEN`** | The client's next step is the same in every case (ask for a new link), and no hint of which tokens exist |
 | **The token travels in a POST body; the email link carries it in the fragment** | Mail scanners that pre-open links can't consume it (consuming needs a POST); it never appears in server logs, `Referer` headers or analytics |
 | **Send only after the transaction commits** (a separate, non-transactional `RegistrationWorkflow` bean) | No email for an account that was rolled back, and no database transaction held open while mail is sent |
 | **If sending fails after commit: log it, still answer 201** | The account exists; resend is the recovery path. Nothing is half-done in the database. |
@@ -681,6 +681,8 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 
 💡 **Transaction boundaries and side effects.** A database transaction can be undone; an email can't. Anything irreversible (email, HTTP calls, messages) goes **after** the commit. The simplest correct structure: a non-transactional method calls a transactional method **on another bean** (a call within the same class bypasses the `@Transactional` proxy, the Phase 0 self-invocation trap), then does the side effect.
 
+💡 **Flush is not commit** (asked 2026-09-26). `saveAndFlush` sends the SQL to Postgres **inside the open transaction**: the rows are invisible to every other connection (READ COMMITTED) and can still be rolled back. The **commit** happens when the outermost `@Transactional` method returns. So "I flushed, so it's saved" is wrong, and an email sent after a flush but before the method returns is still a phantom-email risk. See it: `logging.level.org.springframework.orm.jpa.JpaTransactionManager: DEBUG` prints the email line **before** *"Initiating transaction commit"*; or pause on a breakpoint after the send and query `user_accounts` from `psql`: the new row isn't there yet. (§1.3 used `saveAndFlush` to make constraint violations surface inside the `try`: that's about *when errors appear*, not durability.)
+
 💡 **URL fragments.** Everything after `#` stays in the browser. It isn't sent in the request, so it isn't in server or proxy logs and isn't in the `Referer` header. The frontend's JavaScript reads it and POSTs the token.
 
 💡 **Profile-specific beans, and failing fast.** `@Profile("dev")` puts the logging sender only in dev. With no `EmailSender` in prod, Spring can't satisfy the dependency and **refuses to start**. That's a feature. Tests need their own implementation, or every test context fails.
@@ -701,37 +703,37 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 ### Requirements
 
 **Configuration:**
-- [ ] Typed properties (a record, like `ApiProperties`): `TokenProperties` (`Duration`, `@NotNull`) and `taskflow.app.frontend-base-url` (`@NotBlank`). Validated at startup.
+- [x] Typed properties (a record, like `ApiProperties`): `TokenProperties` (`Duration`, `@NotNull`) and `taskflow.app.frontend-base-url` (`@NotBlank`). Validated at startup.
 
 **Email sending** (`common/mail`):
-- [ ] `EmailSender` interface: send one message (to, subject, body). A small `EmailMessage` record.
-- [ ] `LoggingEmailSender`, **`@Profile("dev")` only**: logs recipient, subject and body at INFO. ⚠️ A **deliberate, profile-bounded exception** to "no tokens in logs": write that down in a comment.
-- [ ] No production implementation yet; a prod start must fail.
-- [ ] In tests: a capturing `EmailSender` (keeps sent messages in memory, with a way to read the latest one for an address and to clear them), registered in the **shared** `TestcontainersConfiguration`.
+- [x] `EmailSender` interface: send one message (to, subject, body). A small `EmailMessage` record.
+- [x] `LoggingEmailSender`, **`@Profile("dev")` only**: logs recipient, subject and body at INFO. ⚠️ A **deliberate, profile-bounded exception** to "no tokens in logs": write that down in a comment.
+- [x] No production implementation yet; a prod start must fail.
+- [x] In tests: a capturing `EmailSender` (keeps sent messages in memory, with a way to read the latest one for an address and to clear them), registered in the **shared** `TestcontainersConfiguration`.
 
 **Migration `V3__create_user_tokens.sql`:**
-- [ ] `id`, `user_account_id` (FK to `user_accounts`, **`ON DELETE CASCADE`**), `purpose` (`CHECK` in `EMAIL_VERIFICATION`, `PASSWORD_RESET`), `token_hash` (**unique**, and a `CHECK` that it's exactly 64 lowercase hex characters), `expires_at`, `used_at` (nullable), audit columns.
-- [ ] **`ix_user_tokens_user_account_id`**: Postgres won't create it for you. 📌 From now on, every FK gets its index.
+- [x] `id`, `user_account_id` (FK to `user_accounts`, **`ON DELETE CASCADE`**), `purpose` (`CHECK` in `EMAIL_VERIFICATION`, `PASSWORD_RESET`), `token_hash` (**unique**, and a `CHECK` that it's exactly 64 lowercase hex characters), `expires_at`, `used_at` (nullable), audit columns.
+- [x] **`ix_user_tokens_user_account_id`**: Postgres won't create it for you. 📌 From now on, every FK gets its index.
 
 **Tokens** (`user` package):
-- [ ] `TokenPurpose` enum; `UserToken` entity (`@Enumerated(STRING)`, `@ManyToOne(fetch = LAZY)`, protected constructor, a factory).
-- [ ] Token generation and hashing in one small class: 32 bytes from **one shared `SecureRandom`**, Base64URL **without padding** → the raw token; SHA-256 of its UTF-8 bytes → **lowercase hex**.
-- [ ] `VerificationTokenService` (or `UserTokenService`, since §1.6 reuses it):
+- [x] `TokenPurpose` enum; `UserToken` entity (`@Enumerated(STRING)`, `@ManyToOne(fetch = LAZY)`, protected constructor, a factory).
+- [x] Token generation and hashing in one small class: 32 bytes from **one shared `SecureRandom`**, Base64URL **without padding** → the raw token; SHA-256 of its UTF-8 bytes → **lowercase hex**.
+- [x] `VerificationTokenService` (or `UserTokenService`, since §1.6 reuses it):
   - `issue(account, purpose)`: delete that user's unused tokens of the purpose, save the new hash with `expires_at = now + ttl`, **return the raw token** (the only place it exists).
-  - `consume(rawToken, purpose)`: hash it, run the conditional `UPDATE` with `now` from the `Clock`; 1 row → return the account id; 0 rows → `400 TOKEN_INVALID`.
-- [ ] Repository: the conditional `UPDATE` and the `DELETE` as `@Modifying` queries returning a row count.
-- [ ] `TOKEN_INVALID` (400) added to `UserErrorCode`.
+  - `consume(rawToken, purpose)`: hash it, run the conditional `UPDATE` with `now` from the `Clock`; 1 row → return the account id; 0 rows → `400 INVALID_TOKEN`.
+- [x] Repository: the conditional `UPDATE` and the `DELETE` as `@Modifying` queries returning a row count.
+- [x] `INVALID_TOKEN` (400) added to `UserErrorCode`.
 
 **Registration, extended:**
-- [ ] `UserRegistrationService.register` also issues the token, in the **same** transaction, and returns the account *and* the raw token.
-- [ ] New `RegistrationWorkflow` (not transactional, **a separate bean**): calls the service, **then** sends the email. If sending throws: log at ERROR with the account id, still return normally.
-- [ ] `AuthController` calls the workflow. Still 201 with the same body; the token **never** appears in the response.
+- [x] `UserRegistrationService.register` also issues the token, in the **same** transaction, and returns the account *and* the raw token.
+- [x] New `RegistrationWorkflow` (not transactional, **a separate bean**): calls the service, **then** sends the email. If sending throws: log at ERROR with the account id, still return normally.
+- [x] `AuthController` calls the workflow. Still 201 with the same body; the token **never** appears in the response.
 
 **Verify and resend:**
-- [ ] `POST /api/v1/auth/verify-email` `{token}` → **204**; invalid → **400 `TOKEN_INVALID`**. Request record with `@NotBlank` and a **masked `toString()`**.
-- [ ] Verifying sets `email_verified_at` (from the `Clock`) through `markEmailVerified`.
-- [ ] `POST /api/v1/auth/verify-email/resend` `{email}` → **always 202**. Only for an existing, unverified account: issue a new token and send after commit (through the workflow). Normalise the email.
-- [ ] Both endpoints are already permitted anonymously by the §1.1 rules; nothing to change there.
+- [x] `POST /api/v1/auth/verify-email` `{token}` → **204**; invalid → **400 `INVALID_TOKEN`**. Request record with `@NotBlank` and a **masked `toString()`**.
+- [x] Verifying sets `email_verified_at` (from the `Clock`) through `markEmailVerified`.
+- [x] `POST /api/v1/auth/verify-email/resend` `{email}` → **always 202**. Only for an existing, unverified account: issue a new token and send after commit (through the workflow). Normalise the email.
+- [x] Both endpoints are already permitted anonymously by the §1.1 rules; nothing to change there.
 
 ### Traps ⚠️
 
@@ -761,6 +763,7 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 | **The phantom email.** Temporarily send the email *inside* the transactional `register`, then force the commit to fail (e.g. a `throw new IllegalStateException()` after the send, or a duplicate registration in a race) | The verification email for an account that **doesn't exist** in `user_accounts` | Side effects after commit. Then move the send to the workflow and repeat: no email. |
 | **Self-invocation.** Put the send and the transactional call in the **same class**, with the transactional one called via `this` | The account is saved **without a transaction** (check the SQL log: no rollback on failure) | `@Transactional` works through the proxy; a call inside the class skips it (Phase 0, now for real) |
 | **Check-then-act consumption.** Consume by reading the token, checking `used_at`, then saving. Fire 20 concurrent verifies with the same token (command in the build order) | **More than one** 204 | Then switch to the conditional `UPDATE`: exactly one 204, nineteen 400s |
+| **Swallowing inside the transaction.** Put a `try/catch` for the `uk_user_tokens_active` violation **inside** `@Transactional resend()` and return normally; run the 10-way double-click resend | Some requests → **500** with `UnexpectedRollbackException: Transaction silently rolled back because it has been marked as rollback-only` | An exception leaving any `@Transactional` method that joined the transaction (here `saveAndFlush`) marks it rollback-only; catching it later doesn't unmark it. **Catch to translate inside; catch to continue only outside** (in the workflow). Register's catch is fine because it always rethrows. |
 | **The prod profile with no sender.** Start with `prod` (supplying the `DB_*` variables for your local database) | Startup fails: no bean of type `EmailSender` | Failing loudly beats silently losing every email |
 | **Mutation checks** once tests exist | e.g. drop the `used_at IS NULL` condition, use the DB's `now()`, store the raw token, remove `@Profile` | Each must turn a test red |
 
@@ -789,7 +792,7 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 
 | Kind | Must prove |
 |---|---|
-| **Unit** | Token generation: 43 URL-safe characters, no padding, two tokens differ · hashing: deterministic, 64 lowercase hex, never equal to the raw token · `VerificationTokenService` with a fixed `Clock`: `issue` deletes old tokens and stores the hash (never the raw token); `consume` passes the clock's instant and maps 0 rows → `TOKEN_INVALID` · `RegistrationWorkflow`: sends **after** the service returns, doesn't send if the service throws, still returns if the sender throws · request `toString()` masks the token |
+| **Unit** | Token generation: 43 URL-safe characters, no padding, two tokens differ · hashing: deterministic, 64 lowercase hex, never equal to the raw token · `VerificationTokenService` with a fixed `Clock`: `issue` deletes old tokens and stores the hash (never the raw token); `consume` passes the clock's instant and maps 0 rows → `INVALID_TOKEN` · `RegistrationWorkflow`: sends **after** the service returns, doesn't send if the service throws, still returns if the sender throws · request `toString()` masks the token |
 | **JPA slice** | The conditional `UPDATE`: 1 row the first time, **0 the second**; 0 when expired (the boundary instant), 0 for the wrong purpose · the `DELETE` removes only the user's unused tokens of that purpose · the hex `CHECK` rejects a raw token · `ON DELETE CASCADE` removes tokens with the user |
 | **Integration** (with the capturing fake) | Register → the fake has one email containing a link → extract the token → verify 204 → Basic login 200 · the same token again → 400 · resend → a new email, and the old token → 400 · resend for unknown / verified / unverified → identical 202s, and **no email** for the first two · the stored hash is not the token |
 | 📊 **Race** | 20 concurrent verifies with one token: exactly **one 204**, nineteen 400s, zero 500s |

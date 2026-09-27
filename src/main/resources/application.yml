@@ -20,6 +20,7 @@ taskflow:
   security:
     tokens:
       email-verification-ttl: 24h
+      password-reset-ttl: 30m
 
 server:
   error:

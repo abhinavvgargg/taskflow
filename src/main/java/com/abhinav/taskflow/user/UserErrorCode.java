@@ -8,7 +8,8 @@ import org.springframework.http.HttpStatus;
 public enum UserErrorCode implements ErrorCode {
 
     EMAIL_ALREADY_REGISTERED(HttpStatus.CONFLICT, "Email is already registered."),
-    USERNAME_TAKEN(HttpStatus.CONFLICT, "Username is already taken.");
+    USERNAME_TAKEN(HttpStatus.CONFLICT, "Username is already taken."),
+    INVALID_TOKEN(HttpStatus.BAD_REQUEST, "Token is invalid");
 
     private final HttpStatus status;
     private final String title;

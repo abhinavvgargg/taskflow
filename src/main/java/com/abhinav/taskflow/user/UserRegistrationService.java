@@ -3,6 +3,10 @@ package com.abhinav.taskflow.user;
 import com.abhinav.taskflow.common.error.CommonErrorUtility;
 import com.abhinav.taskflow.common.error.ResourceConflictException;
 import com.abhinav.taskflow.common.util.Normalize;
+import com.abhinav.taskflow.user.token.IssuedToken;
+import com.abhinav.taskflow.user.token.TokenPurpose;
+import com.abhinav.taskflow.user.token.UserToken;
+import com.abhinav.taskflow.user.token.UserTokenService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -12,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -21,11 +26,11 @@ public class UserRegistrationService {
     private final UserAccountRepository userAccountRepository;
     private final PasswordEncoder passwordEncoder;
     private final Clock clock;
+    private final UserTokenService userTokenService;
 
     @Transactional
-    public UserAccountResponse registerUser (RegisterRequest registerRequest) {
+    public RegistrationResult registerUser (RegisterRequest registerRequest) {
 
-        log.info("Registering {}", registerRequest);
         String normalizedEmail = Normalize.normalizeEmail(registerRequest.email());
         String normalizedUsername = Normalize.normalizeUsername(registerRequest.username());
 
@@ -61,6 +66,30 @@ public class UserRegistrationService {
             }
             throw e;
         }
-        return UserAccountResponse.from(savedUser);
+
+        IssuedToken issuedToken = userTokenService.issue(userAccount, TokenPurpose.EMAIL_VERIFICATION);
+
+        return new RegistrationResult(UserAccountResponse.from(savedUser), issuedToken);
+    }
+
+    @Transactional
+    public void verify (String rawToken) {
+        UserToken token = userTokenService.consume(rawToken,  TokenPurpose.EMAIL_VERIFICATION);
+        UserAccount account = token.getUserAccount();
+        account.markEmailVerified(clock.instant());
+    }
+
+    @Transactional
+    public Optional<VerificationToSend> resend (String rawEmail) {
+
+        // Unknown or already-verified email: nothing to send. The caller answers 202 either way.
+        // No try/catch here on purpose: a constraint violation from issue() has already marked this
+        // transaction rollback-only, so it must propagate. RegistrationWorkflow handles it outside the transaction.
+        return userAccountRepository.findByEmail(Normalize.normalizeEmail(rawEmail))
+                .filter(account -> account.getEmailVerifiedAt() == null)
+                .map(account -> new VerificationToSend(
+                        account.getId(),
+                        account.getEmail(),
+                        userTokenService.issue(account, TokenPurpose.EMAIL_VERIFICATION)));
     }
 }

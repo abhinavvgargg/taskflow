@@ -1,6 +1,6 @@
 # Phase 1 — Revision & Learning Log
 
-> Updated after every sub-phase. **Last updated 2026-09-25, covering §1.1–§1.3** (filter chain · users, passwords, principal, auditor · registration).
+> Updated after every sub-phase. **Last updated 2026-09-27, covering §1.1–§1.4** (filter chain · users, passwords, principal, auditor · registration · email verification).
 > Companions: `PHASE_1_REQUIREMENTS.md` (what to build) · `SECURITY_TESTING_GUIDE.md` (how the rules are tested) · `../phase-0/PHASE_0_LEARNING_LOG.md` (the foundations this builds on).
 
 ---
@@ -28,6 +28,15 @@
 | 17 | Registration response | **201 with the account body, no `Location`** | There's no `GET /users/{id}` (users can't read each other). A `Location` pointing at an unreadable URL would invite someone to add a user-lookup endpoint. |
 | 18 | Race translation | **`saveAndFlush` in the service, translated by constraint name inside `user`**; the generic "read the constraint name" helper (`CommonErrorUtility`) in `common` | The race gets the same specific 409 as the normal path, and `common` still knows nothing about user tables. |
 | 19 | §1.3 automated tests | **Deferred** (2026-09-25, user's call, to keep moving) | Recorded as debt: nothing yet protects the §1.3 fixes from regressing. |
+| 20 | Token in the email link | **URL fragment**: `{frontend-base-url}/verify-email#token=…` | Never sent to a server, so not in access/proxy logs or `Referer`. The frontend POSTs it. |
+| 21 | Old tokens on reissue | **Revoked** (`revoked_at`) + **partial unique index** `uk_user_tokens_active` (one active token per user and purpose). *Changed from "delete" on 2026-09-26.* | The database guarantees one live link and keeps history. Costs: table growth until Phase 9 cleanup; concurrent issues can violate the index (handled in resend). |
+| 22 | "Send after commit" | **`RegistrationWorkflow`**, a separate, non-transactional bean: calls the transactional service, then sends | No phantom emails; no transaction held open for mail; no self-invocation. Phase 9 replaces it with `@TransactionalEventListener(AFTER_COMMIT)`. |
+| 23 | Token lifetimes | **Typed config** `TokenProperties` in `user/token`: `email-verification-ttl: 24h`, `password-reset-ttl: 30m`, both must be positive; `ttl(purpose)` is an exhaustive `switch` | Per environment, validated at startup; a new purpose without a TTL won't compile. In the feature package so `common` doesn't import `TokenPurpose`. |
+| 24 | Email send fails after commit | **Log at ERROR with the account id only, still 201 / 202** | The account exists; resend is the recovery. |
+| 25 | `UserToken` → `UserAccount` | **`@ManyToOne(fetch = LAZY)`**, `join fetch` where the account is needed | No eager load on every token read. |
+| 26 | `expires_at > created_at` check | **Dropped** (commented out in V3) rather than wiring JPA auditing to the `Clock` | It compared two time sources: `created_at` is real time (auditing), `expires_at` comes from the injected `Clock`. A test clock set in the past would fail the insert. Wiring auditing to the `Clock` remains the principled option. |
+| 27 | Token-service transaction rule | **`Propagation.MANDATORY`** on `issue` / `consume` | They refuse to run without the caller's transaction, so a token can't be committed separately from the registration or verification it belongs to. |
+| 28 | §1.4 automated tests | **Deferred** (2026-09-27, user's call) | Debt, with the planned list below. |
 
 ---
 
@@ -36,6 +45,7 @@
 | § | Built | Key artifacts |
 |---|---|---|
 | **1.1** | Security starter, one filter chain, deny-by-default URL rules, stateless Basic, CSRF and logout off, health details restricted, security tests | `TaskflowSecurityConfig`, `management.endpoint.health.roles`, `TaskflowSecurityConfigTest` (19-row slice), `TaskflowSecurityIntegrationTest` |
+| **1.4** | Email verification: token machinery (generate, SHA-256 at rest, expire, single-use, purpose, revoke on reissue), email sending (dev logs it; prod has none yet), registration sends a link after commit, `POST /verify-email`, `POST /verify-email/resend` (always 202) | `V3__create_user_tokens.sql`, `UserToken`, `TokenPurpose`, `UserTokenRepository` (conditional `UPDATE`s), `TokenCodec`, `UserTokenService`, `TokenProperties`, `IssuedToken`, `RegistrationWorkflow`, `RegistrationResult`, `VerificationToSend`, `VerifyTokenRequest`, `ResendVerificationRequest`, `EmailSender` / `EmailMessage` / `LoggingEmailSender`, `FrontendProperties`, `ResourceInvalidException`; test side: `CapturingEmailSender`, `src/test/resources/application-test.yml` |
 | **1.3** | `POST /api/v1/auth/register`: validation (incl. a byte-length constraint), normalisation, duplicate checks, bcrypt, the race translated to the same 409s, 201 with an account summary | `AuthController`, `RegisterRequest` (masked `toString`), `UserAccountResponse`, `UserErrorCode`, `UserRegistrationService`, `MaxUtf8Bytes` + `MaxUtf8BytesValidator`, `ValidationMessages.properties`, `CommonErrorUtility`, `Normalize.normalizeUsername`, repository `existsBy…` |
 | **1.2** | `user_accounts` schema, `UserAccount` entity, `DelegatingPasswordEncoder`, `Clock` bean, `TaskflowPrincipal`, `TaskflowUserDetailsService` (Basic now checks real users), email normalisation, auditor writes the app username | `V2__create_user_accounts.sql`, `UserAccount`, `UserRole`, `UserAccountRepository`, `TimeConfig`, `Normalize`, `TaskflowPrincipal`, `TaskflowUserDetailsService`, `AuditAwareImpl`; tests: `TestUsers`, `TaskflowUserDetailsServiceTest`, `AuditAwareImplTest`, `NormalizeTest`, `UserAccountRepositoryTest` |
 
@@ -54,6 +64,10 @@
 - *(§1.3, verified by manual run)* Anonymous `POST /api/v1/auth/register` → **201** with `{id, email, username, displayName, emailVerified: false, createdAt}` and no `Location`; stored lowercase, `{bcrypt}` hash, `created_by = system`.
 - *(§1.3)* Duplicate email in any case → **409 `EMAIL_ALREADY_REGISTERED`** (`field: email`); duplicate username → **409 `USERNAME_TAKEN`**; both → the email code. Bad input → **400** with `fieldErrors`, password never echoed; 19 emoji → 400 with the custom byte message.
 - *(§1.3)* A newly registered account can't log in (401) until `email_verified_at` is set; verified by hand with SQL (§1.4 automates it).
+- *(§1.4, manual run reported passing 2026-09-27)* Register → the dev log shows `http://localhost:3000/verify-email#token=…` → `POST /verify-email` → **204** → Basic login works. The same token again → **400 `INVALID_TOKEN`**.
+- *(§1.4)* Resend (email in any case) → **202** and a new email; the previous token is revoked (→ 400). Verified or unknown email → 202, no email.
+- *(§1.4)* Only a 64-character hex hash is stored; tokens end exactly one way (consumed or revoked); at most one active token per user and purpose.
+- *(§1.4, reported)* 10 concurrent resends → 10 × 202; 20 concurrent verifies with one token → one 204.
 
 **Commits:** `9211684` (§1.1 code) · `56340ae` (docs).
 
@@ -154,6 +168,35 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 **Two temporary deliberate-failure edits were still in the code at wrap-up:** `@Size(max = 72)` instead of `@MaxUtf8Bytes(72)`, and `log.info("Registering {}", registerRequest)`, which still logs the **email** (PII) at INFO even with the password masked. They need reverting before commit. ⚠️ The general lesson: after a deliberate failure, check the diff for leftovers.
 
+### §1.4: email verification
+
+**Found in code review** (most §1.4 bugs never reached a run):
+
+| Bug | What would have happened |
+|---|---|
+| **The pushed commit didn't compile its tests** | `TestcontainersConfiguration` (committed) referenced `CapturingEmailSender`, which was still untracked. Anyone cloning `main` got a compile error. New files must be staged too. |
+| **Compact constructor called the accessor** | `if (!emailVerificationTtl().isPositive())` inside a record's compact constructor: fields are assigned only **after** the body, so the accessor returns `null` → NPE on **every** startup, in every profile (and it was pushed). Use the *parameter*. |
+| **Properties classes that couldn't bind** | Plain classes, package-private fields, no setters or constructor parameters → nothing bound → `@NotBlank` / `@NotNull` fail at startup. Records bind through the constructor. |
+| **`LoggingEmailSender` without `@Component`** | `@Profile` on a class that's never a bean does nothing; dev would have had no `EmailSender`. |
+| **`user_tokens` without a primary key** | `ddl-auto: validate` doesn't check primary keys, so it would never have surfaced. |
+| **`token_hash CHAR(64)`** | Expected to fail `ddl-auto: validate` (Hibernate maps `String` to `varchar`; Postgres `char` is `bpchar`). Changed before running, so **not verified**. |
+| **Missing constraints and names** | No hex `CHECK` (the guard against storing a raw token), no purpose `CHECK`, an unnamed FK, `idx_` instead of `ix_`. |
+| **`common` importing a feature** | `common/config/TokenProperties` imported `user.token.TokenPurpose`. Moved to `user/token`. |
+| **Two sources for the TTL** | `TokenPurpose` hard-coded 24h/30m while `TokenProperties` sat unused; expiry computed twice. |
+| **The email was sent inside the registration transaction** | The workflow was wired backwards (service → workflow, `MANDATORY`), so the email left **before** the commit. A failed commit → a **phantom email**; a mail failure → the **whole registration rolled back**. Inverted to controller → workflow (no transaction) → service (commits) → send. |
+| **"I used `saveAndFlush`, so it's committed"** (a question, not a bug) | Flush sends SQL inside the open transaction; the rows are invisible to other connections and can still roll back. Commit happens when the outermost `@Transactional` method returns. |
+| **The link, three rounds** | Relative, then pointing at the **API** path, then a **hard-coded** `http://localhost:3000`. Final: `frontendBaseUrl() + "/verify-email#token=…"`, built in one method. |
+| **A `MANDATORY` wrapper called via `this`** | `issueToken()` inside the same class: self-invocation, so the annotation had **no effect**. Removed. |
+| **An internal carrier named `…Response`** | It held the raw token; the name invited returning it from a controller. Renamed `RegistrationResult`. |
+| **The `expires_at > created_at` check** | Compared two clocks (auditing's real time vs the injected `Clock`). Dropped before V3 was applied. |
+| **Resend didn't normalise** | `Alice@Example.com` never found → a silent 202 with no email, undiagnosable for the user. |
+| **Resend caught the race *inside* the transaction** | The violation from `saveAndFlush` marks the transaction rollback-only; swallowing it and returning normally → `UnexpectedRollbackException` → 500. Also an inverted `null` check swallowed unnamed violations. Moved to the workflow, outside the transaction. |
+| **PII in logs** | The resend failure log wrote the email; §1.3's `log.info("Registering {}")` survived three reviews and a commit before being removed. |
+
+**Rule learned:** inside a transaction, catch a database exception only to **translate** it (throw another). To **continue**, catch it outside, after the transaction has rolled back. Register's catch is fine because it always rethrows.
+
+**V3 is now applied and frozen.** Flyway stores each applied migration's checksum; editing even a comment or whitespace in V3 fails the next startup with a checksum mismatch. Schema changes go in V4.
+
 ### Found along the way
 
 **`LogoutFilter` is on by default** and appeared in the filter list without being asked for. It handles `/logout` **before** `AuthorizationFilter`, so `denyAll()` doesn't govern it. Disabled; `/logout` now falls to `denyAll` (verified: 401 / 403). Phase 2 builds the real logout.
@@ -198,6 +241,20 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 | *(§1.3)* **409 names the `field`, never echoes the value** | Emails copied into error bodies, client logs and error trackers |
 | *(§1.3)* **201 without a `Location` for a resource the caller can't read** | Advertising a URL that doesn't exist, and inviting a user-lookup endpoint |
 | *(§1.3)* **Response DTO with only public fields; `emailVerified` derived, not hard-coded** | Hash, lock state or attempts leaking; a mapper that's wrong the day it's reused |
+| *(§1.4)* **Tokens from `SecureRandom` (32 bytes), URL-safe Base64 without padding** | Predictable or guessable links (`java.util.Random`, UUIDs) |
+| *(§1.4)* **Only the SHA-256 (hex) stored, with a `CHECK` on its format** | Working links in a leaked database or backup; a raw token stored by mistake |
+| *(§1.4)* **Consume with one conditional `UPDATE`, branch on the row count** | Double use under concurrency (in §1.6: one reset link applied twice) |
+| *(§1.4)* **"Now" from the `Clock`, passed into the query** | Two time sources; expiry untestable |
+| *(§1.4)* **One error for every bad token (`INVALID_TOKEN`)** | An oracle revealing which tokens exist or were used |
+| *(§1.4)* **Token in a POST body; in links, only in the fragment** | Scanners consuming single-use links; tokens in logs and `Referer` |
+| *(§1.4)* **Irreversible side effects after commit, from a non-transactional bean** | Phantom emails; transactions held open during mail; registration lost because mail was down |
+| *(§1.4)* **`Propagation.MANDATORY` on the token service** | A token committed separately from its registration or verification |
+| *(§1.4)* **Partial unique index: one active token per user and purpose** | Several live links for one account |
+| *(§1.4)* **Catch-to-continue only outside the transaction** | `UnexpectedRollbackException` 500s |
+| *(§1.4)* **Resend always 202, normalised, sent to the stored address** | A second enumeration oracle; silent non-delivery |
+| *(§1.4)* **Dev-only logging sender; none in prod; `@Primary` thread-safe fake in shared test config** | Tokens in production logs; silently lost email; extra test contexts; flaky cross-thread reads |
+| *(§1.4)* **Failure logs carry the account id, never the email or link** | PII and credentials in error logs |
+| *(§1.4)* **FK index + `ON DELETE CASCADE`** | Sequential scans; a future user deletion blocked by tokens |
 
 ---
 
@@ -274,7 +331,30 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 *Enumeration, both halves:* registration reveals registered emails by design (decision 7); login and reset must never reveal them (§1.5, §1.6).
 
+**§1.4 — Email verification.**
+
+*Secure token design, the six properties:* unguessable (256 bits, `SecureRandom`) · hashed at rest · expiring · single-use · purpose-bound · invalidated on reissue. Plus: never in URLs sent to servers, never in logs outside dev.
+
+*SHA-256 for tokens, bcrypt for passwords:* slow hashing protects **low-entropy** human secrets from guessing. A 256-bit random token can't be guessed at any speed, and a deterministic hash lets the database **find the row by it**; bcrypt's salt makes that impossible.
+
+*A conditional `UPDATE` as a concurrency gate:* `… WHERE used/consumed IS NULL …` is atomic in Postgres. Of two concurrent statements, one updates the row and the other gets **0 rows**. `@Modifying` queries bypass the persistence context (stale entities) and JPA auditing (`updated_at` doesn't move).
+
+*Flush vs commit:* flush = SQL sent inside the open transaction, invisible to other connections, still undoable. Commit = permanent and visible, when the outermost `@Transactional` method returns.
+
+*Rollback-only:* an exception leaving any `@Transactional` method that **joined** the transaction (Spring Data repository methods do) marks the whole transaction rollback-only. Catching it later doesn't clear the mark; a normal return then fails at commit.
+
+*`Propagation.MANDATORY`:* "join the caller's transaction, or refuse to run". Useful for building blocks that must never commit on their own.
+
+*Self-invocation, seen for real:* an annotation on a method called via `this` compiles, looks right, and does nothing.
+
+*Records:* a compact constructor's body runs **before** the fields are assigned, so use the parameters, not the accessors. And every record holding a secret (`IssuedToken`, `VerifyTokenRequest`, `VerificationToSend`, `EmailMessage`) masks it in `toString()`.
+
+*Profile beans and failing fast:* `@Profile("dev")` needs a stereotype (`@Component`) to mean anything. With no `EmailSender` in `prod`, startup fails, which is intended. Tests supply a `@Primary`, thread-safe capturing fake in the **shared** test configuration (no new context), cleared per test.
+
+*Flyway immutability:* once applied, a migration's checksum is recorded; any edit (even a comment) breaks the next startup.
+
 📊 **Measured:**
+- *(§1.4)* Existing suite still 76/76 after the resend refactor. **No §1.4 tests** (decision 28). Manual runs reported passing, including 10 concurrent resends (all 202) and 20 concurrent verifies (one 204).
 - *(§1.3)* The existing suite stays green after the §1.3 changes (76/76, including `GlobalExceptionHandler`'s refactor to `CommonErrorUtility`). **No §1.3 tests yet** (decision 19).
 - *(§1.2)* Suite: **45 → 76 tests**, all green, **9.4s** wall-clock, **2** Postgres containers (one per context type: `@SpringBootTest` and `@DataJpaTest`). The new classes reused existing contexts (JPA test 0.07s, security integration test 1.1s).
 - *(§1.2)* **7/7** planted bugs turned the suite red (table in §7). Mapping `role` as `ORDINAL` was caught **before any test ran**: `ddl-auto: validate` refused to start every database-backed context (32 errors).
@@ -319,12 +399,22 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 29. **Two people register the same email at the same instant. What happens?** Both can pass the service check. The unique constraint stops the second; `saveAndFlush` makes that happen inside the `try`, so it's translated to the same `EMAIL_ALREADY_REGISTERED`. With plain `save()` it would surface at commit as a generic `RESOURCE_CONFLICT`. *(Reasoned from the code; the 20-way race hasn't been run yet.)*
 30. **Why does registration return 201 without `Location`?** There's no URL the caller can read the new user at; advertising one would be wrong and would invite a user-lookup endpoint.
 31. **Why normalise before checking for duplicates, not just before saving?** Otherwise the check misses case variants, the constraint does the work, and when two fields clash the wrong error code can win.
+32. **Design a password-reset (or verification) token.** 32 random bytes from `SecureRandom`, URL-safe; store only its SHA-256; expiring, single-use (conditional `UPDATE`), purpose-bound, revoked on reissue; carried in a POST body (and in links, only in the fragment); never logged.
+33. **Why SHA-256 for tokens but bcrypt for passwords?** Tokens have 256 bits of entropy, so speed doesn't help an attacker, and a deterministic hash is needed to look the row up. Passwords are low-entropy, so they need a slow, salted hash.
+34. **How do you make a token single-use under concurrent requests?** One conditional `UPDATE … WHERE consumed_at IS NULL AND revoked_at IS NULL AND expires_at > :now`; exactly one request gets row count 1.
+35. **Why is the token in the URL fragment?** Fragments aren't sent to servers: nothing in access logs, proxies or `Referer`. Mail scanners can't consume it either, because consuming needs a POST.
+36. **What happens if the mail server is down during registration?** The account is already committed; the failure is logged by account id; the response is still 201; the user uses resend.
+37. **Why not send the email inside the transaction?** If the commit fails, the email is a phantom; and the transaction and its connection stay open for the whole send.
+38. **What's the difference between flush and commit?** See §4 (§1.4). "I flushed, so it's saved" is wrong.
+39. **You caught the exception, so why did the transaction still fail?** The exception left a joined `@Transactional` method (the repository's `saveAndFlush`), which marked the transaction rollback-only; returning normally then fails at commit with `UnexpectedRollbackException`. Catch to continue only outside the transaction.
+40. **What does `Propagation.MANDATORY` do, and why use it?** Requires an existing transaction. It keeps token issuing atomic with the registration that needs it.
+41. **Does resend reveal which emails exist?** Not by status or body (always 202). It still leaks by **timing** (a known email does work; an unknown one returns at once); Phase 9's async sending removes most of that, and Phase 10's rate limiting stops email-bombing.
+42. **Why did your record's compact constructor throw an NPE?** It called the accessor, which reads a field that isn't assigned until the body finishes.
+43. **Can you edit a migration that's already been applied?** No. Flyway checks each applied migration's checksum on startup; fix forward with a new version.
 
 ### Not answerable yet
 
-- Design a password-reset token. — §1.4 / §1.6
 - How does your lockout survive a failed authentication rolling back? — §1.5
-- Why SHA-256 for tokens but bcrypt for passwords? — §1.4 (half-answered: bcrypt is salted, so it can't be looked up by hash)
 - The measured outcome of the registration race (`save` vs `saveAndFlush`). — §1.3 debt
 
 ---
@@ -379,6 +469,22 @@ P=$(python3 -c 'print("\U0001F600"*19)'); printf '%s' "$P" | wc -c      # 76 byt
 update user_accounts set email_verified_at = now() where username = 'carol';   -- verify by hand until §1.4
 ```
 
+Email verification (§1.4):
+
+```bash
+curl -s -i -H 'Content-Type: application/json' -d '{"token":"<TOKEN>"}' localhost:8080/api/v1/auth/verify-email          # 204, then 400 on reuse
+curl -s -i -H 'Content-Type: application/json' -d '{"email":"CAROL@example.com"}' localhost:8080/api/v1/auth/verify-email/resend   # always 202
+# double-click races
+seq 10 | xargs -P 10 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"email":"<unverified email>"}' localhost:8080/api/v1/auth/verify-email/resend | sort | uniq -c
+seq 20 | xargs -P 20 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"token":"<TOKEN>"}' localhost:8080/api/v1/auth/verify-email | sort | uniq -c
+```
+
+```sql
+select purpose, length(token_hash), consumed_at is not null as consumed, revoked_at is not null as revoked from user_tokens order by id;
+```
+
+Watching flush vs commit: `logging.level.org.springframework.orm.jpa.JpaTransactionManager: DEBUG` shows where *"Initiating transaction commit"* falls relative to the email log line.
+
 Logging switches for one-off investigation (dev only; switch them off again):
 - `org.springframework.security.web.DefaultSecurityFilterChain: DEBUG` prints the filter list at startup.
 - `org.springframework.security: TRACE` follows one request filter by filter.
@@ -397,6 +503,8 @@ Logging switches for one-off investigation (dev only; switch them off again):
 | *(§1.3)* `RegisterRequest` without a `toString()` override, logged with `log.info("Registering {}", request)` | **The plaintext password in the app log** |
 | *(§1.3)* `@Size(max = 72)` instead of `@MaxUtf8Bytes(72)`, 19 emoji (76 bytes) | **500**, `IllegalArgumentException: password cannot be more than 72 bytes` from the encoder. With `@MaxUtf8Bytes` restored: a clean 400. (A first attempt showed no error, most likely a duplicate stopping it before hashing, or a stale app.) |
 | *(§1.3, not run yet)* 20 concurrent registrations, same email, `save()` vs `saveAndFlush()` | Expected: generic `RESOURCE_CONFLICT` responses with `save()`, none with `saveAndFlush()` |
+| *(§1.4, happened in the code, caught in review)* Email sent inside the registration transaction | Not observed at runtime; fixed before a failing commit could show the phantom email |
+| *(§1.4, optional, not run)* The phantom email on purpose · self-invocation · check-then-act consume (20-way race) · swallowing inside the transaction (10-way resend → `UnexpectedRollbackException`) · prod start without a sender | Listed in `PHASE_1_REQUIREMENTS.md` §1.4, deliberate failures |
 
 **Mutation checks: each bug planted in a scratch copy; every one turned the suite red.**
 
@@ -427,7 +535,15 @@ Logging switches for one-off investigation (dev only; switch them off again):
 
 ## 8. Carried debt
 
-- ⚠️ **Revert the deliberate-failure leftovers before committing §1.3:** `@Size(max = 72)` → `@MaxUtf8Bytes(72)` in `RegisterRequest`, and delete `log.info("Registering {}", registerRequest)` (it logs the email at INFO).
+- **§1.3 leftovers:** `@MaxUtf8Bytes(72)` is restored. `log.info("Registering {}")` is removed in the working tree but **still in the last pushed commit**; it goes away with the §1.4 commit.
+- **Stage new files when committing §1.4:** `VerificationToSend.java` is untracked (the same slip that broke `ece675b`).
+- **§1.4 tests (decision 28)**: none. Planned: `TokenCodec` (43 URL-safe characters, distinct tokens, 64-hex deterministic hash); `UserTokenService` with a fixed `Clock` (revoke then insert, hash never raw, 0 rows → `INVALID_TOKEN`, malformed input rejected before hashing); `RegistrationWorkflow` (sends after the service returns, not on failure, survives a sender exception, swallows only `uk_user_tokens_active`); JPA slice (conditional `UPDATE` 1 then 0, expiry boundary, wrong purpose, hex `CHECK`, partial unique index, cascade); integration with `CapturingEmailSender` (register → token from the inbox → verify → login; reuse → 400; resend revokes; unknown/verified → 202 with no email).
+- **§1.4 deliberate failures**: not run (list in §7).
+- **Resend leaks by timing**, and can be used to flood an inbox: Phase 9 (async) and Phase 10 (rate limiting).
+- **A double-click on resend can send several emails**, of which only the last link works. Acceptable; documented.
+- **`user_tokens` grows** (revoked tokens are kept): `deleteExpiredBefore` exists, unused, for Phase 9's cleanup job.
+- **`EMAIL_VERIFIED` security event**: recorded from §1.5, when `security_events` exists.
+- **Nits (§1.4):** `markEmailVerified` overwrites the timestamp if called twice (`if (emailVerifiedAt == null)` would keep the first); `verify` / `resend` live in `UserRegistrationService` (an `EmailVerificationService` would name them better).
 - **§1.3 tests (decision 19)**: none written. Planned: the validator (72/73 bytes, emoji, `null`), masked `toString()`, the service with fakes (normalise before checks, nothing saved on a duplicate, hash never raw, race translation), a web slice (201, 400 without the password echoed, 19 emoji → 400), and integration (stored form, duplicates in any case, unverified → 401). This also leaves the Phase 0 "never echo `rejectedValue`" debt without its test.
 - **§1.3 deliberate failure #3 (the 20-way race)**: not run. The command is in `PHASE_1_REQUIREMENTS.md` §1.3.
 - **401/403 bodies are Boot's error JSON, not `ProblemDetail`**: Phase 2 (`AuthenticationEntryPoint`, `AccessDeniedHandler`).

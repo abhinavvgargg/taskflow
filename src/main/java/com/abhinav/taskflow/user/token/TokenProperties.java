@@ -1,6 +1,5 @@
-package com.abhinav.taskflow.common.config;
+package com.abhinav.taskflow.user.token;
 
-import com.abhinav.taskflow.user.token.TokenPurpose;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
@@ -20,6 +19,10 @@ public record TokenProperties(
         public TokenProperties {
                 if (emailVerificationTtl != null && !emailVerificationTtl.isPositive()) {
                         throw new IllegalArgumentException("emailVerificationTtl must be positive");
+                }
+
+                if (passwordResetTtl != null && !passwordResetTtl.isPositive()) {
+                        throw new IllegalArgumentException("passwordResetTtl must be positive");
                 }
         }
 
