@@ -99,7 +99,7 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 
 ## 3. Working agreement (how every chat must operate)
 
-> Updated 2026-09-25: the original loop, merged with everything agreed during Phases 0–1. Follow it for the rest of the project.
+> Updated 2026-09-25, amended 2026-09-27: the original loop, merged with everything agreed during Phases 0–1. Follow it for the rest of the project.
 
 ### 3.1 The build loop, per sub-phase (§N.x)
 
@@ -110,13 +110,22 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
       - **Alternatives we didn't take**: for each, **why we didn't take it**, and **the concrete problem it would cause later** (in which phase, for whom, how it would show up). "It's worse" isn't enough; name the failure.
    3. **What we're optimising for.** The qualities we trade other things for.
    4. **Concepts** 💡, each with its *why*.
-   5. **Requirements**: what to build and the rules it must satisfy, as a checklist. **Requirements, not code.**
+   5. **Requirements**: what to build and the rules it must satisfy. **Requirements, not code.** Written to be read without decoding (added 2026-09-27):
+      - **Plain words, one requirement per line**, each saying *what* must be true in a single sentence. The explanation lives in the sections above, not inside the checklist.
+      - **Endpoints as a table**: method, path, request body, success response, and each error (status + code).
+      - **Group by the class or file you'll write** (e.g. "`RegistrationService`: …"), so each group maps to one piece of code.
+      - **Each group ends with "Done when:"**, meaning the observable result that shows it works.
+      - If a requirement needs more than two lines, it's either two requirements or an explanation that belongs in "How and why".
    6. **Traps** ⚠️, as their own section, never folded into the tables above. Traps actually hit are kept and marked *(Hit)*.
    7. **Deliberate failures**: a *create this / what you'll see / lesson* table, referenced from the build-order steps where each one belongs.
    8. **Build order.**
    9. **Tests**: what each test must prove.
 
    Open 🏗️ **decisions come first**: options plus a recommendation. I choose, or defer to "when it's time", in which case it's raised again at the start of the sub-phase that needs it. Every decision is recorded, with its date and reasoning, in the phase's Decisions table.
+
+   **Recommend the best approach, not the simplest** (added 2026-09-27). The recommendation is the one a strong senior engineer would ship in production at this project's scale, and the brief says **why it beats every alternative listed**. "Best" means: correct under concurrency and failure, enforced where it can't be bypassed (often the database), and honest about its costs. If the best approach is disproportionately expensive for a learning project, say so and still present it, with the cheaper option clearly labelled as the compromise. **If I come up with an approach better than the one recommended, say so plainly, explain what the recommendation missed**, and update the decision. (Why this rule exists: in §1.4 the recommendation was "delete old tokens"; the approach I implemented, revoke + a partial unique index, is stronger because the database itself guarantees one active token.)
+
+   **New tables and schema changes: you provide the migration SQL** (added 2026-09-27), together with a table explaining **every column**: its type, what it's used for, and why each constraint and index exists. Verify the SQL in a rolled-back transaction before I apply it. I still write the entity and the code that uses it.
 2. **I implement it.**
 3. **Review.** I share the code; you review it like a senior dev:
    - bugs first, each with the concrete failure it causes
@@ -155,7 +164,7 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 | File | Holds | Updated |
 |---|---|---|
 | `docs/PROJECT_CONTEXT.md` | This file: goals, plan, working agreement, standards | When decisions change |
-| `docs/phase-N/PHASE_N_REQUIREMENTS.md` | Dated Decisions table, phase-level concepts, one section per sub-phase in the §3.1 layout, ticked as done | Before and after each sub-phase |
+| `docs/phase-N/PHASE_N_REQUIREMENTS.md` | A **"Where we are (resume here)"** block at the top (done / next / decisions to raise / debt / environment), then the dated Decisions table, phase-level concepts, one section per sub-phase in the §3.1 layout, ticked as done | Before and after each sub-phase; the status block at every wrap-up, so a new chat can resume from the files alone |
 | `docs/phase-N/PHASE_N_LEARNING_LOG.md` | Same structure as Phase 0's: decisions, what we covered, challenges, practices and what they prevent, learning per stage, interview questions (answerable now / not yet), commands, deliberate failures and mutation results, carried debt | **After every sub-phase**, by you. Only verified facts and measured numbers. |
 | Guides (`phase-0/TESTING_GUIDE.md`, `phase-1/SECURITY_TESTING_GUIDE.md`, …) | Patterns to copy, with verified behaviour | When a new kind of test appears |
 
@@ -258,3 +267,7 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 ## 9. First message for the new chat
 
 > Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3. Then read the current phase's `docs/phase-N/PHASE_N_REQUIREMENTS.md` and `PHASE_N_LEARNING_LOG.md`, and the testing guides. We're on **§N.x** — brief it in the section 3.1 layout; requirements, not code.
+
+**Resuming right now (2026-09-27):**
+
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.4 are done. Brief **§1.5 (login, lockout, login history)** in the section 3.1 layout, raising its open decisions first. Requirements, not code; SQL for new tables.

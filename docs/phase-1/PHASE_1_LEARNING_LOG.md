@@ -67,7 +67,9 @@
 - *(§1.4, manual run reported passing 2026-09-27)* Register → the dev log shows `http://localhost:3000/verify-email#token=…` → `POST /verify-email` → **204** → Basic login works. The same token again → **400 `INVALID_TOKEN`**.
 - *(§1.4)* Resend (email in any case) → **202** and a new email; the previous token is revoked (→ 400). Verified or unknown email → 202, no email.
 - *(§1.4)* Only a 64-character hex hash is stored; tokens end exactly one way (consumed or revoked); at most one active token per user and purpose.
-- *(§1.4, reported)* 10 concurrent resends → 10 × 202; 20 concurrent verifies with one token → one 204.
+- *(§1.4)* 10 concurrent resends on a new unverified account → 10 × 202 (reported). **Verified in the dev database (2026-09-27):** that account (id 1252) holds **5 tokens: 4 revoked, 1 active**. That's the registration token plus 4 resends that issued; the other **6 requests collided** on `uk_user_tokens_active`, were caught in the workflow, and still answered 202 without sending. Across all 8 tokens: every hash is 64-char hex, no token is both consumed and revoked, and no account has more than one active token.
+- *(§1.4, reported)* 20 concurrent verifies with one token → one 204, nineteen 400. (The database can't confirm this one: even a broken check-then-act would leave a single `consumed_at`. Only the HTTP counts show it.)
+- *(§1.4)* The first race attempt was run incorrectly and re-run; the numbers above are from the corrected run.
 
 **Commits:** `9211684` (§1.1 code) · `56340ae` (docs).
 
@@ -354,7 +356,7 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 *Flyway immutability:* once applied, a migration's checksum is recorded; any edit (even a comment) breaks the next startup.
 
 📊 **Measured:**
-- *(§1.4)* Existing suite still 76/76 after the resend refactor. **No §1.4 tests** (decision 28). Manual runs reported passing, including 10 concurrent resends (all 202) and 20 concurrent verifies (one 204).
+- *(§1.4)* Existing suite still 76/76 after the resend refactor. **No §1.4 tests** (decision 28). Manual runs passing. Resend race: 10 × 202, and the database shows 4 tokens issued and **6 requests handled through the collision path** (verified). Verify race: one 204 (reported).
 - *(§1.3)* The existing suite stays green after the §1.3 changes (76/76, including `GlobalExceptionHandler`'s refactor to `CommonErrorUtility`). **No §1.3 tests yet** (decision 19).
 - *(§1.2)* Suite: **45 → 76 tests**, all green, **9.4s** wall-clock, **2** Postgres containers (one per context type: `@SpringBootTest` and `@DataJpaTest`). The new classes reused existing contexts (JPA test 0.07s, security integration test 1.1s).
 - *(§1.2)* **7/7** planted bugs turned the suite red (table in §7). Mapping `role` as `ORDINAL` was caught **before any test ran**: `ddl-auto: validate` refused to start every database-backed context (32 errors).

@@ -3,6 +3,20 @@
 > Companion to `../PROJECT_CONTEXT.md` · decisions and traps from `../phase-0/PHASE_0_LEARNING_LOG.md` · test patterns from `../phase-0/TESTING_GUIDE.md`. Requirements only, no code. Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** Anything unfinished becomes a side task in Phase 2. The phase doesn't get extended.
 
+## ▶ Where we are (resume here) — updated 2026-09-27
+
+| | |
+|---|---|
+| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) |
+| **Next** | **§1.5 — Login, lockout, login history.** Not yet briefed. The section below still has the *old* notes; brief it fresh in the `PROJECT_CONTEXT.md` §3.1 layout, applying the 2026-09-27 rules (best approach, SQL for `security_events` with a column table, plain requirements). |
+| **Decisions to raise first in §1.5** | What a failed login reveals (generic 401 vs `EMAIL_NOT_VERIFIED` only after a correct password; locked stays a pre-check) · counter reset after the lock expires · status for a wrong current password (§1.6) · the `security_events` shape (decision 6 chose the table; columns not designed yet) · append-only table: extend `BaseEntity` or not |
+| **Carried into §1.5** | Record `EMAIL_VERIFIED` in `security_events` from the verify flow (moved from §1.4) |
+| **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: §1.3 and §1.4 tests (planned lists there), §1.3 race and §1.4 deliberate failures not run, resend timing leak, bcrypt timing not measured, small nits |
+| **Environment state** | Dev DB has migrations V1–V3 applied (**V3 is frozen**: never edit an applied migration). Dev users include `alice` (ADMIN, verified), `bob` (unverified), `carol` (verified), plus accounts from manual runs. Suite: 76/76, ~10s, 2 containers. |
+| **Numbering note** | This doc's Decisions table (1–16) and the learning log's decisions (1–28) are numbered **independently**; the learning log is the complete record. |
+
+---
+
 **The goal of Phase 1 is identity you can trust.** By the end, a user can register, prove they own their email, log in, get locked out after repeated failures and unlocked automatically, reset a forgotten password and change a known one. Every protected request knows **who** is calling, and every audit column records it. Phase 2 swaps the transport (HTTP Basic → JWT) without touching any of this.
 
 ⚠️ **Trap, the one that defines this phase:** security code that "works" in the happy path. A login endpoint that returns 200 for the right password is maybe 20% of the job. The rest is what happens with a wrong password, with an unknown email, when the same token gets used twice at once, and when an attacker compares response times. **Every section below has a test for the failure path, not just the success path.**
