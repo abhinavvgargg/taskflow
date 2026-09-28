@@ -2,6 +2,7 @@ package com.abhinav.taskflow.organization;
 
 import com.abhinav.taskflow.common.security.TaskflowSecurityConfig;
 import com.abhinav.taskflow.common.web.PageableFactory;
+import com.abhinav.taskflow.user.TaskflowUserDetailsService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -34,6 +35,9 @@ public class OrganizationControllerTest {
 
     @MockitoBean
     private PageableFactory pageableFactory;
+
+    @MockitoBean
+    private TaskflowUserDetailsService taskflowUserDetailsService;
 
     @Test
     void getById_returnsOrganizationJson() throws Exception {

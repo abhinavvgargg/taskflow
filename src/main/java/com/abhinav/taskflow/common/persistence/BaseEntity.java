@@ -13,17 +13,7 @@ import java.time.Instant;
 @MappedSuperclass
 @EntityListeners(AuditingEntityListener.class)
 @Getter
-public abstract class BaseEntity {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = "global_gen")
-    @SequenceGenerator(
-            name = "global_gen",
-            sequenceName = "global_id_seq",
-            allocationSize = 50,
-            initialValue = 1
-    )
-    private Long id;
+public abstract class BaseEntity extends IdentifiedEntity {
 
     @CreatedDate
     @Column(updatable = false)

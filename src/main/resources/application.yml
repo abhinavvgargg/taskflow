@@ -21,6 +21,9 @@ taskflow:
     tokens:
       email-verification-ttl: 24h
       password-reset-ttl: 30m
+    lockout:
+      max-failed-attempts: 5
+      duration: 15m
 
 server:
   error:

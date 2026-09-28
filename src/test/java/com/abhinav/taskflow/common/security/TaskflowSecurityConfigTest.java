@@ -1,11 +1,13 @@
 package com.abhinav.taskflow.common.security;
 
+import com.abhinav.taskflow.user.TaskflowUserDetailsService;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
@@ -27,7 +29,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @WebMvcTest(TaskflowSecurityConfig.class)
 @Import(TaskflowSecurityConfig.class)
-class TaskflowSecurityConfigTest {
+class
+TaskflowSecurityConfigTest {
+
+    @MockitoBean
+    private TaskflowUserDetailsService taskflowUserDetailsService;
 
     @Autowired
     MockMvc mockMvc;

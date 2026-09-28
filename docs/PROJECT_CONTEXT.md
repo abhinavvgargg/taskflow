@@ -270,4 +270,4 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 **Resuming right now (2026-09-27):**
 
-> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.4 are done. Brief **§1.5 (login, lockout, login history)** in the section 3.1 layout, raising its open decisions first. Requirements, not code; SQL for new tables.
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.4 are done. **§1.5 (login, lockout, login history) is briefed and its decisions are settled (17–22, 2026-09-27)**; I'm implementing it from build-order step 2. Review my code when I share it (step 3 of the build loop).

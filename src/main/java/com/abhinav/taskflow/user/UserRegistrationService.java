@@ -3,6 +3,8 @@ package com.abhinav.taskflow.user;
 import com.abhinav.taskflow.common.error.CommonErrorUtility;
 import com.abhinav.taskflow.common.error.ResourceConflictException;
 import com.abhinav.taskflow.common.util.Normalize;
+import com.abhinav.taskflow.common.web.ClientInfo;
+import com.abhinav.taskflow.user.event.SecurityEventRecorder;
 import com.abhinav.taskflow.user.token.IssuedToken;
 import com.abhinav.taskflow.user.token.TokenPurpose;
 import com.abhinav.taskflow.user.token.UserToken;
@@ -27,6 +29,7 @@ public class UserRegistrationService {
     private final PasswordEncoder passwordEncoder;
     private final Clock clock;
     private final UserTokenService userTokenService;
+    private final SecurityEventRecorder securityEventRecorder;
 
     @Transactional
     public RegistrationResult registerUser (RegisterRequest registerRequest) {
@@ -73,10 +76,12 @@ public class UserRegistrationService {
     }
 
     @Transactional
-    public void verify (String rawToken) {
+    public void verify (String rawToken, ClientInfo clientInfo) {
         UserToken token = userTokenService.consume(rawToken,  TokenPurpose.EMAIL_VERIFICATION);
         UserAccount account = token.getUserAccount();
         account.markEmailVerified(clock.instant());
+        // Same transaction: EMAIL_VERIFIED exists exactly when the verification commits
+        securityEventRecorder.recordEmailVerified(account.getId(), clientInfo);
     }
 
     @Transactional
