@@ -1,6 +1,6 @@
 # Phase 1 — Revision & Learning Log
 
-> Updated after every sub-phase. **Last updated 2026-09-27, covering §1.1–§1.4** (filter chain · users, passwords, principal, auditor · registration · email verification).
+> Updated after every sub-phase. **Last updated 2026-09-29, covering §1.1–§1.5** (filter chain · users, passwords, principal, auditor · registration · email verification · login, lockout, login history).
 > Companions: `PHASE_1_REQUIREMENTS.md` (what to build) · `SECURITY_TESTING_GUIDE.md` (how the rules are tested) · `../phase-0/PHASE_0_LEARNING_LOG.md` (the foundations this builds on).
 
 ---
@@ -37,6 +37,17 @@
 | 26 | `expires_at > created_at` check | **Dropped** (commented out in V3) rather than wiring JPA auditing to the `Clock` | It compared two time sources: `created_at` is real time (auditing), `expires_at` comes from the injected `Clock`. A test clock set in the past would fail the insert. Wiring auditing to the `Clock` remains the principled option. |
 | 27 | Token-service transaction rule | **`Propagation.MANDATORY`** on `issue` / `consume` | They refuse to run without the caller's transaction, so a token can't be committed separately from the registration or verification it belongs to. |
 | 28 | §1.4 automated tests | **Deferred** (2026-09-27, user's call) | Debt, with the planned list below. |
+| 29 | What a failed login reveals (§1.5 D1, 2026-09-27) | **Unknown email, wrong password, locked → the same 401 `AUTHENTICATION_FAILED`. Unverified → 403 `EMAIL_NOT_VERIFIED`, only after a correct password.** Lock stays a pre-check; verification moved to the post-checks. | Spring's default pre-checks reveal locked / unverified from an email alone (verified, and seen in deliberate failure 1). A "locked" answer after a correct password would be a password oracle. |
+| 30 | Lockout policy (§1.5 D2) | **5 wrong passwords → 15 minutes; the counter resets when the lock is applied.** Only wrong passwords count; success resets. | Lockout caps guessing on one account; it punishes the owner, so keep it mild. Throttling the attacker is Phase 10. |
+| 31 | `security_events` shape (§1.5 D3) | **`inet` IP, all six Phase 1 types in the `CHECK`, `failure_reason` only on `LOGIN_FAILED`, unknown-email failures not recorded, `ON DELETE CASCADE`** | Validated canonical IPs; no migration for §1.6; erasure really erases. |
+| 32 | Security-event retention (§1.5 D3) | **12 months**, deleted by Phase 9's cleanup job (stance only) | IPs are personal data. |
+| 33 | Append-only events (§1.5 D4) | **`IdentifiedEntity` (id only) split out of `BaseEntity`; `SecurityEvent` is `@Immutable`; a row-level trigger rejects `UPDATE`** | No `updated_*` columns or second clock; `@Immutable` alone ignores changes silently. |
+| 34 | Wrong `currentPassword` in §1.6 (§1.5 D5, decided early) | **400 `CURRENT_PASSWORD_INCORRECT`, `field: currentPassword`, counts toward lockout** | 401 would log a Phase 2 client out; counting closes "stolen token + unlimited guesses". |
+| 35 | Where the password check lives | **One `DaoAuthenticationProvider` bean** with custom pre/post checks; the `AuthenticationManager` bean is `AuthenticationConfiguration.getAuthenticationManager()` | The single provider bean becomes the global manager's provider, so Basic and `/auth/login` share checks and events (startup log confirms). `new ProviderManager(...)` would have no publisher and leave Basic on an auto-built provider. |
+| 36 | How the counter and the log are written | **Counter from authentication events, in `REQUIRES_NEW` (`LoginAttemptService`), no `catch` in the listener (fail closed). `LOGIN_*` recorded by `LoginService` only; `ACCOUNT_LOCKED` on every path, in the lock's transaction; `EMAIL_VERIFIED` in verify's transaction.** | Every password path counts; a failure can't roll the count back; each record commits exactly with what it records. |
+| 37 | `SecurityEvent` → user | **Plain `Long userAccountId`** (switched from `@ManyToOne` during review) | A log never navigates to the user; the lockout path only has an id. |
+| 38 | Home of `LoginFailedException` | **`common/error`** (the user's choice; the brief said `user`) | It's code-agnostic, like `ResourceConflictException`: a better home than the brief's. |
+| 39 | §1.5 tests, mutation checks, timing measurement, deliberate failures 2 and 4–8 | **Deferred** (2026-09-29, user's call, to keep moving) | Debt, with the planned list in §8. |
 
 ---
 
@@ -45,6 +56,7 @@
 | § | Built | Key artifacts |
 |---|---|---|
 | **1.1** | Security starter, one filter chain, deny-by-default URL rules, stateless Basic, CSRF and logout off, health details restricted, security tests | `TaskflowSecurityConfig`, `management.endpoint.health.roles`, `TaskflowSecurityConfigTest` (19-row slice), `TaskflowSecurityIntegrationTest` |
+| **1.5** | Login (`POST /auth/login`: 200 / 401 / 403), lockout on every password path (5 → 15 min, atomic counter, conditional lock), `security_events` (append-only, `inet`), recording `LOGIN_SUCCEEDED` / `LOGIN_FAILED` / `ACCOUNT_LOCKED` / `EMAIL_VERIFIED`, `GET /users/me/login-history` | `V4__create_security_events.sql`, `IdentifiedEntity`, `UserAuthenticationChecks`, the provider and manager beans in `TaskflowSecurityConfig`, `LockoutProperties`, `LoginRequest`, `LoginService`, `LoginFailedException`, `AuthenticationEventsListener`, `LoginAttemptService`, four `UserAccountRepository` queries, `user/event` (`SecurityEvent`, `SecurityEventType`, `LoginFailureReason`, `SecurityEventRepository`, `SecurityEventRecorder`), `ClientInfo`, `UserController`, `LoginHistoryService`, `LoginHistoryResponse` |
 | **1.4** | Email verification: token machinery (generate, SHA-256 at rest, expire, single-use, purpose, revoke on reissue), email sending (dev logs it; prod has none yet), registration sends a link after commit, `POST /verify-email`, `POST /verify-email/resend` (always 202) | `V3__create_user_tokens.sql`, `UserToken`, `TokenPurpose`, `UserTokenRepository` (conditional `UPDATE`s), `TokenCodec`, `UserTokenService`, `TokenProperties`, `IssuedToken`, `RegistrationWorkflow`, `RegistrationResult`, `VerificationToSend`, `VerifyTokenRequest`, `ResendVerificationRequest`, `EmailSender` / `EmailMessage` / `LoggingEmailSender`, `FrontendProperties`, `ResourceInvalidException`; test side: `CapturingEmailSender`, `src/test/resources/application-test.yml` |
 | **1.3** | `POST /api/v1/auth/register`: validation (incl. a byte-length constraint), normalisation, duplicate checks, bcrypt, the race translated to the same 409s, 201 with an account summary | `AuthController`, `RegisterRequest` (masked `toString`), `UserAccountResponse`, `UserErrorCode`, `UserRegistrationService`, `MaxUtf8Bytes` + `MaxUtf8BytesValidator`, `ValidationMessages.properties`, `CommonErrorUtility`, `Normalize.normalizeUsername`, repository `existsBy…` |
 | **1.2** | `user_accounts` schema, `UserAccount` entity, `DelegatingPasswordEncoder`, `Clock` bean, `TaskflowPrincipal`, `TaskflowUserDetailsService` (Basic now checks real users), email normalisation, auditor writes the app username | `V2__create_user_accounts.sql`, `UserAccount`, `UserRole`, `UserAccountRepository`, `TimeConfig`, `Normalize`, `TaskflowPrincipal`, `TaskflowUserDetailsService`, `AuditAwareImpl`; tests: `TestUsers`, `TaskflowUserDetailsServiceTest`, `AuditAwareImplTest`, `NormalizeTest`, `UserAccountRepositoryTest` |
@@ -71,7 +83,10 @@
 - *(§1.4, reported)* 20 concurrent verifies with one token → one 204, nineteen 400. (The database can't confirm this one: even a broken check-then-act would leave a single `consumed_at`. Only the HTTP counts show it.)
 - *(§1.4)* The first race attempt was run incorrectly and re-run; the numbers above are from the corrected run.
 
-**Commits:** `9211684` (§1.1 code) · `56340ae` (docs).
+- *(§1.5, reported by the user 2026-09-29)* Lockout works: 5 wrong passwords lock the account; step 6 and 7 manual runs "everything works" (the detailed results weren't sent). Bob (unverified) with a wrong password under Spring's **default** checks → **403** (deliberate failure 1), and **401** once the custom checks were back. With a transactional `LoginService` and the counter `REQUIRED`, the counter **stayed 0** (deliberate failure 3).
+- *(§1.5, verified by me)* V4 in a rolled-back transaction (every constraint, the trigger, the index plan, the cascade); both web slices start and pass with the provider bean and a mocked user store (scratch copy, 2026-09-29); the default-vs-custom check behaviour and the entity mapping (details in §4).
+
+**Commits:** `9211684` (§1.1 code) · `56340ae` (docs) · §1.5: `aa7efca` ("1.5 complete", code + docs), `a2cd682` (history-controller fix).
 
 ---
 
@@ -199,6 +214,31 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 **V3 is now applied and frozen.** Flyway stores each applied migration's checksum; editing even a comment or whitespace in V3 fails the next startup with a checksum mismatch. Schema changes go in V4.
 
+### §1.5: login, lockout, login history
+
+**Found in review.** Several would have looked fine in a quick manual run:
+
+| Bug | What would have happened |
+|---|---|
+| **`common/security` imported `user.TaskflowUserDetailsService`** | Broke decision 2 (`common` never imports a feature). And the web slices couldn't start: `@WebMvcTest` never loads `@Service` beans (verified in `WebMvcTypeExcludeFilter`), so the config's dependency had no bean. Fixed: depend on `UserDetailsService`, mock it in the slices. |
+| **No exception translation in `/login` yet** | Every wrong password → **500** plus an ERROR stack trace, from `GlobalExceptionHandler`'s catch-all. |
+| **Login response built from the principal** | `displayName` / `createdAt` null, `emailVerified` taken from `isEnabled()`, and a 200 with an empty body for an unexpected principal. Fixed: load the account; throw on an unexpected type. |
+| **Unknown exceptions wrapped in `RuntimeException`**; **`.get()`** on the lookup | The real type (e.g. a database outage) hidden from logs and future handlers; a bare `NoSuchElementException`. |
+| **`findIdByEmail` as a derived query** | The words between `find` and `By` don't pick the selected column: it loaded the whole entity. **Verified on a scratch copy:** an unknown email → `Optional.empty`, an existing one → `JpaSystemException: Result type is 'Long' but the query returned a 'UserAccount'`. Fixed with `@Query("select u.id …")`. |
+| **The listener caught `DataAccessException` and logged it** | Together with the previous bug: every wrong password still got 401, but **the counter never moved and nothing ever locked**. Only an ERROR line showed it. Rule: the failure path fails closed (no `catch`). |
+| **`@Table("security_events")`** | Doesn't compile: JPA's `@Table` has `name`, not `value` (verified). |
+| **Every event factory accepted a `LoginFailureReason`** | `accountLocked(..., BAD_CREDENTIALS)` → `ck_security_events_reason_iff_login_failed` violation (verified): a 500 at the moment an account locks. Fixed: only `loginFailed` takes one, and requires it. |
+| **History query: one type, and `OrderBy` in the method name** | Couldn't return three types; two sources of sort, and `PageableFactory`'s default `createdAt` would have been a 500 on an entity without it. |
+| **A `PageableFactory.of(page, size, sort)` overload** | Skipped `stabilize()`: the next caller with a non-unique sort gets pages that skip or repeat rows. Removed. |
+| **`occuredAt` in the response record** | A misspelt JSON field, free to fix before clients, a breaking change after. |
+| **`import java.awt.*`** | An IDE auto-import in a server class. |
+
+**"Deliberate failure 1 still shows 401."** The app hadn't been restarted after commenting out the setters; `spring-boot:run` doesn't reload code. Verified separately, standalone against the project's jars: an unverified account with a wrong password gets `DisabledException` under the default checks and `BadCredentialsException` under ours.
+
+**A mistake in my own notes**: the pre-brief §1.5 notes said to record `ACCOUNT_LOCKED` from `/auth/login` only. A lock caused by a Basic brute force would then be unrecorded. The brief records it on every path.
+
+**V4 is now applied and frozen**, like V1–V3.
+
 ### Found along the way
 
 **`LogoutFilter` is on by default** and appeared in the filter list without being asked for. It handles `/logout` **before** `AuthorizationFilter`, so `denyAll()` doesn't govern it. Disabled; `/logout` now falls to `denyAll` (verified: 401 / 403). Phase 2 builds the real logout.
@@ -257,6 +297,20 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 | *(§1.4)* **Dev-only logging sender; none in prod; `@Primary` thread-safe fake in shared test config** | Tokens in production logs; silently lost email; extra test contexts; flaky cross-thread reads |
 | *(§1.4)* **Failure logs carry the account id, never the email or link** | PII and credentials in error logs |
 | *(§1.4)* **FK index + `ON DELETE CASCADE`** | Sequential scans; a future user deletion blocked by tokens |
+| *(§1.5)* **One provider bean with custom checks; the manager from `AuthenticationConfiguration`** | Basic and `/auth/login` checking passwords differently; a manager with a no-op event publisher |
+| *(§1.5)* **Locked as a pre-check with the generic 401; unverified as a post-check** | Enumeration of locked / unverified accounts from an email alone; a lock that reveals the right guess |
+| *(§1.5)* **Translate only the three expected exceptions** | A database outage reported as "invalid email or password" |
+| *(§1.5)* **Counter driven by authentication events** | Basic as an unthrottled side door; any future password path forgetting to count |
+| *(§1.5)* **Counter writes in `REQUIRES_NEW`, login flow not transactional** | The rollback trap: a failed login undoing its own count (seen: counter stayed 0) |
+| *(§1.5)* **Increment in SQL; lock with a conditional `UPDATE` and its row count** | Lost updates under parallel guesses; two `ACCOUNT_LOCKED` events for one lock |
+| *(§1.5)* **The failure listener fails closed** (no `catch`) | Lockout silently off while every response looks normal (it happened: see §2) |
+| *(§1.5)* **Conditional reset on success** | A row write on every Basic-authenticated request |
+| *(§1.5)* **A record commits with what it records** (attempts alone, state changes with the change) | Events for things that rolled back; attempts lost with the failure they describe |
+| *(§1.5)* **IP from the socket (`getRemoteAddr` / `WebAuthenticationDetails`), null when absent** | Forged IPs via `X-Forwarded-For`; `127.0.0.1` recorded for "unknown" |
+| *(§1.5)* **`inet`, `CHECK`s, and a trigger on `security_events`** | Garbage IPs; impossible type/reason pairs; silently rewritten audit history |
+| *(§1.5)* **Factories that can't build an invalid event** | Constraint violations (500s) at the moment an account locks |
+| *(§1.5)* **History: owner from the principal, sort fixed and index-backed, stabilised by `PageableFactory`** | IDOR on other users' IPs; skipped or repeated rows across pages; in-memory sorts |
+| *(§1.5)* **No minimum length on the login password, but the 72-byte cap** | Locking out old passwords when the policy tightens; `matches()` comparing only 72 bytes |
 
 ---
 
@@ -355,7 +409,33 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 *Flyway immutability:* once applied, a migration's checksum is recorded; any edit (even a comment) breaks the next startup.
 
+**§1.5 — Login, lockout, login history.**
+
+*The check order* (verified, 6.5.11): load the user (unknown → `BadCredentialsException` after a dummy bcrypt) → **pre-checks** → password → **post-checks**. If a pre-check fails, the password is still compared for timing (`alwaysPerformAdditionalChecksOnUser`, default `true`), but the pre-check's exception wins. Verified standalone against the project's jars:
+
+| Checks | Unverified, wrong password | Unverified, correct password |
+|---|---|---|
+| Spring's defaults | `DisabledException` | `DisabledException` |
+| Ours (locked pre, verified post) | `BadCredentialsException` | `DisabledException` |
+
+*Authentication events:* `ProviderManager` publishes one event per `authenticate()`, synchronously on the request thread. A child manager doesn't re-publish its parent's. `BadCredentialsException` and `UsernameNotFoundException` both map to `AuthenticationFailureBadCredentialsEvent`; locked and disabled get their own events, so they never count. The event carries the name **as typed**.
+
+*Where the manager comes from:* Boot registers a `DefaultAuthenticationEventPublisher` bean; `AuthenticationConfiguration` builds the global manager with it, from the one `AuthenticationProvider` bean if there is one, otherwise from the one `UserDetailsService`. `HttpSecurity`'s manager has no providers of its own and delegates to it. The `WARN` from `InitializeUserDetailsBeanManagerConfigurer` is expected with this setup.
+
+*A record's transaction follows what it records:* an attempt (the count, `LOGIN_FAILED`) commits on its own, so it survives the failure; a state change (`ACCOUNT_LOCKED`, `EMAIL_VERIFIED`) commits with the change. `REQUIRES_NEW` suspends the caller's transaction and takes a second connection; that's why the login flow has none.
+
+*Fail closed:* the listener runs inside `authenticate()`. Its exception becomes the request's 500, which is correct: "count or refuse", never "maybe count".
+
+*Derived queries:* between `find` and `By`, only `Distinct` / `First` / `Top` mean anything. `findIdByEmail` is `findByEmail`. To select a column, write the JPQL.
+
+*Slices:* `@WebMvcTest` loads controllers, advice, filters, converters and security config, never services. A config that needs a service needs a mock in every slice that imports it, and the mock satisfies the dependency only if the config asks for the interface.
+
+*`inet` and `@Immutable`:* Hibernate 6.6 maps `InetAddress` to `inet` with no annotation, and `ddl-auto: validate` accepts it (verified on a scratch copy). `0:0:0:0:0:0:0:1` is stored as `::1`, but `InetAddress.getHostAddress()` prints the long form. `@Immutable` ignores changes without an error (Hibernate's Javadoc), which is why the trigger exists.
+
+*Boot and forwarded headers:* on a detected cloud platform (Kubernetes etc.), forwarded-header handling is on by default (verified in `CloudPlatform`). `getRemoteAddr()` then reflects `X-Forwarded-For` from trusted proxies: decide it in Phase 11.
+
 📊 **Measured:**
+- *(§1.5)* **No §1.5 tests** (decision 39). V4 verified in a rolled-back transaction: 3 valid rows; 8 invalid inserts rejected by the expected constraint; `UPDATE` rejected by the trigger; an `UPDATE` matching nothing → `UPDATE 0`; the history plan is `Index Scan Backward` with no Sort node; the cascade removed 3 → 0 rows. The web slices pass with the provider bean (scratch copy, 2026-09-29). **Suite count after §1.5 not reported.** Timing (known vs unknown email) **not measured**.
 - *(§1.4)* Existing suite still 76/76 after the resend refactor. **No §1.4 tests** (decision 28). Manual runs passing. Resend race: 10 × 202, and the database shows 4 tokens issued and **6 requests handled through the collision path** (verified). Verify race: one 204 (reported).
 - *(§1.3)* The existing suite stays green after the §1.3 changes (76/76, including `GlobalExceptionHandler`'s refactor to `CommonErrorUtility`). **No §1.3 tests yet** (decision 19).
 - *(§1.2)* Suite: **45 → 76 tests**, all green, **9.4s** wall-clock, **2** Postgres containers (one per context type: `@SpringBootTest` and `@DataJpaTest`). The new classes reused existing contexts (JPA test 0.07s, security integration test 1.1s).
@@ -413,10 +493,22 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 41. **Does resend reveal which emails exist?** Not by status or body (always 202). It still leaks by **timing** (a known email does work; an unknown one returns at once); Phase 9's async sending removes most of that, and Phase 10's rate limiting stops email-bombing.
 42. **Why did your record's compact constructor throw an NPE?** It called the accessor, which reads a field that isn't assigned until the body finishes.
 43. **Can you edit a migration that's already been applied?** No. Flyway checks each applied migration's checksum on startup; fix forward with a new version.
+44. **How does your lockout survive a failed authentication rolling back?** The counter is written by an event listener, in its own `REQUIRES_NEW` transaction, and the login flow has no transaction. I saw the alternative: with the count in the login's transaction, it stayed at 0.
+45. **How does your login avoid user enumeration?** Unknown email, wrong password and locked all give the same 401 and body, and all pay one bcrypt. Only someone with the correct password learns "not verified" (403). It still leaks a little timing: a known email does a few extra writes (not yet measured).
+46. **Why doesn't a locked account get a "locked" message?** Shown only after a correct password, it would tell an attacker which guess was right. So "locked" is a pre-check and gets the generic answer.
+47. **Isn't lockout a denial-of-service vector?** Yes: anyone who knows your email can lock you out. Auto-unlock limits it; per-IP rate limiting (Phase 10) is the real fix, because it throttles the attacker, not the victim.
+48. **How does lockout work under concurrent requests?** An SQL increment under the row lock, then a conditional `UPDATE` "lock where count ≥ 5" that also resets the count; its row count tells exactly one request that it applied the lock.
+49. **Why is the counter driven by events, but login history recorded by the endpoint?** Every password check must count, Basic included. But Basic authenticates every request, so recording "logins" from the events would log every API call.
+50. **Where does your `AuthenticationManager` come from, and how do Basic and `/login` share it?** One provider bean; `AuthenticationConfiguration` builds the global manager from it with Boot's event publisher; `HttpSecurity`'s manager delegates to it, and `/login` injects it. `new ProviderManager(...)` would have a no-op publisher.
+51. **Your lockout passed a manual run but never locked anyone. How?** A derived query that threw only for existing accounts, and a listener that caught the exception. Every response was still a normal 401. Now the failure path fails closed.
+52. **When do you use `REQUIRES_NEW`, and what does it cost?** When a record must survive its caller's rollback (a failed-attempt count). It suspends the caller's transaction and takes a second connection, which can exhaust a small pool.
+53. **How do you get the client's IP? Why not `X-Forwarded-For`?** The socket address; a header is client-controlled. Behind a proxy, trust forwarded headers only from that proxy (Phase 11), and know Boot turns this on by itself on detected cloud platforms.
+54. **How do you make an audit table append-only?** No setters and `@Immutable` in the application, plus a trigger that rejects `UPDATE` in the database, because `@Immutable` ignores changes silently.
 
 ### Not answerable yet
 
-- How does your lockout survive a failed authentication rolling back? — §1.5
+- The timing gap between a known and an unknown email at login (measure it). — §1.5 debt
+- How much the Java read-modify-write counter loses under 20 parallel guesses. — §1.5 deliberate failure 4
 - The measured outcome of the registration race (`save` vs `saveAndFlush`). — §1.3 debt
 
 ---
@@ -487,6 +579,23 @@ select purpose, length(token_hash), consumed_at is not null as consumed, revoked
 
 Watching flush vs commit: `logging.level.org.springframework.orm.jpa.JpaTransactionManager: DEBUG` shows where *"Initiating transaction commit"* falls relative to the email log line.
 
+Login, lockout, history (§1.5):
+
+```bash
+curl -s -i -H 'Content-Type: application/json' -d '{"email":"carol@example.com","password":"wrong"}' localhost:8080/api/v1/auth/login      # 401; the 5th locks
+curl -s -i -u carol@example.com:wrong localhost:8080/api/v1/organizations                                                               # the same counter, through Basic
+curl -s -u carol@example.com:<password> 'localhost:8080/api/v1/users/me/login-history?size=5&page=0'                                      # own history, newest first
+# 20 parallel wrong passwords (deliberate failure 4, and the race)
+seq 20 | xargs -P 20 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"email":"carol@example.com","password":"wrong-{}"}' localhost:8080/api/v1/auth/login | sort | uniq -c
+```
+
+```sql
+select failed_login_attempts, locked_until from user_accounts where username = 'carol';
+update user_accounts set failed_login_attempts = 0, locked_until = null where username = 'carol';   -- unlock by hand
+select id, user_account_id, event_type, failure_reason, host(ip_address) as ip, left(user_agent, 20) as ua, occurred_at
+from security_events order by id desc limit 15;
+```
+
 Logging switches for one-off investigation (dev only; switch them off again):
 - `org.springframework.security.web.DefaultSecurityFilterChain: DEBUG` prints the filter list at startup.
 - `org.springframework.security: TRACE` follows one request filter by filter.
@@ -506,6 +615,10 @@ Logging switches for one-off investigation (dev only; switch them off again):
 | *(§1.3)* `@Size(max = 72)` instead of `@MaxUtf8Bytes(72)`, 19 emoji (76 bytes) | **500**, `IllegalArgumentException: password cannot be more than 72 bytes` from the encoder. With `@MaxUtf8Bytes` restored: a clean 400. (A first attempt showed no error, most likely a duplicate stopping it before hashing, or a stale app.) |
 | *(§1.3, not run yet)* 20 concurrent registrations, same email, `save()` vs `saveAndFlush()` | Expected: generic `RESOURCE_CONFLICT` responses with `save()`, none with `saveAndFlush()` |
 | *(§1.4, happened in the code, caught in review)* Email sent inside the registration transaction | Not observed at runtime; fixed before a failing commit could show the phantom email |
+| *(§1.5)* Spring's default checks, unverified bob with a **wrong** password | **403 `EMAIL_NOT_VERIFIED`**: the account's state leaks without the password. With the custom checks: 401. (A first attempt showed 401 because the app hadn't been restarted.) |
+| *(§1.5)* The rollback trap: `@Transactional` login, counter `REQUIRED` | **Counter stayed 0** after the wrong passwords, with no error anywhere |
+| *(§1.5, happened in the code, caught in review)* A derived `findIdByEmail` plus a listener that swallowed `DataAccessException` | Verified on a scratch copy: `JpaSystemException` for every existing account. With the `catch`, lockout would have been silently off. |
+| *(§1.5, deferred 2026-09-29)* The documented manager bean (2) · lost updates with a Java counter (4) · "locked" after a correct password (5) · history from the events (6) · trusting `X-Forwarded-For` (7) · `UPDATE` on `security_events` (8) | Listed in `PHASE_1_REQUIREMENTS.md` §1.5, deliberate failures |
 | *(§1.4, optional, not run)* The phantom email on purpose · self-invocation · check-then-act consume (20-way race) · swallowing inside the transaction (10-way resend → `UnexpectedRollbackException`) · prod start without a sender | Listed in `PHASE_1_REQUIREMENTS.md` §1.4, deliberate failures |
 
 **Mutation checks: each bug planted in a scratch copy; every one turned the suite red.**
@@ -537,14 +650,16 @@ Logging switches for one-off investigation (dev only; switch them off again):
 
 ## 8. Carried debt
 
-- **§1.3 leftovers:** `@MaxUtf8Bytes(72)` is restored. `log.info("Registering {}")` is removed in the working tree but **still in the last pushed commit**; it goes away with the §1.4 commit.
-- **Stage new files when committing §1.4:** `VerificationToSend.java` is untracked (the same slip that broke `ece675b`).
+- **§1.5 tests (decision 39)**: none. Planned (full table in `PHASE_1_REQUIREMENTS.md` §1.5): an **adjustable `Clock`** in the shared test config; unit tests for the provider's checks, `LoginAttemptService`, `LoginService`'s translation and recording, `ClientInfo`; JPA tests for the four counter queries, the `inet` round trip, the `CHECK`s, the trigger, history paging; integration tests for the rollback trap, the Basic side door, unlock by clock, identical 401 bodies, 403 for unverified, reset on success, history ownership and "no rows from Basic"; the 20-way race.
+- **§1.5 mutation checks, timing measurement (known vs unknown email), and deliberate failures 2 and 4–8**: not run (decision 39).
+- **§1.5 suite count**: not reported after §1.5 (last confirmed 76/76 at §1.4; the two slices pass).
+- **Nits (§1.5):** the slice tests mock the concrete `TaskflowUserDetailsService` (a `common/security` test imports `user`; mock `UserDetailsService`), and `class` sits on its own line in `TaskflowSecurityConfigTest`; `UserAuthenticationChecks` needs a comment saying the default expiry checks were dropped on purpose; the 403 detail text is "Email Not Verified".
+- **Known ordering (§1.5):** the 5th wrong password writes `ACCOUNT_LOCKED` a moment before its `LOGIN_FAILED`, because the listener runs inside `authenticate()`. Newest-first history shows the failure above the lock.
 - **§1.4 tests (decision 28)**: none. Planned: `TokenCodec` (43 URL-safe characters, distinct tokens, 64-hex deterministic hash); `UserTokenService` with a fixed `Clock` (revoke then insert, hash never raw, 0 rows → `INVALID_TOKEN`, malformed input rejected before hashing); `RegistrationWorkflow` (sends after the service returns, not on failure, survives a sender exception, swallows only `uk_user_tokens_active`); JPA slice (conditional `UPDATE` 1 then 0, expiry boundary, wrong purpose, hex `CHECK`, partial unique index, cascade); integration with `CapturingEmailSender` (register → token from the inbox → verify → login; reuse → 400; resend revokes; unknown/verified → 202 with no email).
 - **§1.4 deliberate failures**: not run (list in §7).
 - **Resend leaks by timing**, and can be used to flood an inbox: Phase 9 (async) and Phase 10 (rate limiting).
 - **A double-click on resend can send several emails**, of which only the last link works. Acceptable; documented.
 - **`user_tokens` grows** (revoked tokens are kept): `deleteExpiredBefore` exists, unused, for Phase 9's cleanup job.
-- **`EMAIL_VERIFIED` security event**: recorded from §1.5, when `security_events` exists.
 - **Nits (§1.4):** `markEmailVerified` overwrites the timestamp if called twice (`if (emailVerifiedAt == null)` would keep the first); `verify` / `resend` live in `UserRegistrationService` (an `EmailVerificationService` would name them better).
 - **§1.3 tests (decision 19)**: none written. Planned: the validator (72/73 bytes, emoji, `null`), masked `toString()`, the service with fakes (normalise before checks, nothing saved on a duplicate, hash never raw, race translation), a web slice (201, 400 without the password echoed, 19 emoji → 400), and integration (stored form, duplicates in any case, unverified → 401). This also leaves the Phase 0 "never echo `rejectedValue`" debt without its test.
 - **§1.3 deliberate failure #3 (the 20-way race)**: not run. The command is in `PHASE_1_REQUIREMENTS.md` §1.3.

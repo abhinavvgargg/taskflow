@@ -3,17 +3,17 @@
 > Companion to `../PROJECT_CONTEXT.md` · decisions and traps from `../phase-0/PHASE_0_LEARNING_LOG.md` · test patterns from `../phase-0/TESTING_GUIDE.md`. Requirements only, no code. Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** Anything unfinished becomes a side task in Phase 2. The phase doesn't get extended.
 
-## ▶ Where we are (resume here) — updated 2026-09-27
+## ▶ Where we are (resume here) — updated 2026-09-29
 
 | | |
 |---|---|
-| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) |
-| **Next** | **§1.5 — Login, lockout, login history: briefed, decisions accepted 2026-09-27 (17–22). Ready to implement**, starting at build-order step 2 (`IdentifiedEntity` split, then V4). The V4 SQL in §1.5 is verified (rolled back) and ready to apply. |
-| **Decisions (§1.5)** | All settled 2026-09-27, recommendations accepted: 17 failed-login responses · 18 lockout 5 / 15m, reset on lock · 19 `security_events` shape · 20 12-month retention stance · 21 append-only (id-only superclass, `@Immutable`, trigger) · 22 wrong `currentPassword` → 400, counts toward lockout (§1.6). None open. |
-| **Carried into §1.5** | Record `EMAIL_VERIFIED` in `security_events` from the verify flow (moved from §1.4; now a §1.5 requirement under `AuthController`) |
-| **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: §1.3 and §1.4 tests (planned lists there), §1.3 race and §1.4 deliberate failures not run, resend timing leak, bcrypt timing not measured, small nits |
-| **Environment state** | Dev DB has migrations V1–V3 applied (**V3 is frozen**: never edit an applied migration). Dev users include `alice` (ADMIN, verified), `bob` (unverified), `carol` (verified), plus accounts from manual runs. Suite: 76/76, ~10s, 2 containers. |
-| **Numbering note** | This doc's Decisions table (1–22) and the learning log's decisions (1–28; §1.5's are added at wrap-up) are numbered **independently**; the learning log is the complete record. |
+| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) |
+| **Next** | **§1.6 — Password reset & password change.** Not yet briefed: the section below still has the old notes. Brief it fresh in the `PROJECT_CONTEXT.md` §3.1 layout (best approach, SQL for any schema change, plain requirements). |
+| **Decisions to raise first in §1.6** | Does a successful reset **clear the lockout**? · Does it **verify** an unverified email? · Justify the reset token TTL (configured `30m`) · What happens to other outstanding reset tokens, and should reset/change record `PASSWORD_RESET` / `PASSWORD_CHANGED` in the same transaction (the §1.5 rule says yes). Already settled: **decision 22** (wrong `currentPassword` → 400, counts toward lockout). |
+| **Carried into §1.6** | `SecurityEventRecorder.recordPasswordReset` / `recordPasswordChanged` already exist; the `PASSWORD_RESET` token purpose and `password-reset-ttl` config exist (§1.4); `LoginFailedException` and the `AuthenticationManager` bean exist for re-authentication (decision 22). |
+| **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: **§1.3, §1.4 and §1.5 tests** (planned lists there), §1.5 mutation checks and timing measurement, deliberate failures not run (§1.3 race, §1.4 list, §1.5 #2 and #4–8), resend timing leak, bcrypt timing not measured, small nits |
+| **Environment state** | Dev DB has migrations **V1–V4** applied (**all frozen**: never edit an applied migration). Dev users include `alice` (ADMIN, verified), `bob` (unverified), `carol` (verified), plus accounts from manual runs; `security_events` holds rows from the §1.5 manual runs, and carol may be locked or have a non-zero counter (reset: `update user_accounts set failed_login_attempts = 0, locked_until = null where username = 'carol';`). Suite: last confirmed 76/76 at §1.4; not re-run after §1.5 (the two web slices pass). |
+| **Numbering note** | This doc's Decisions table (1–22) and the learning log's decisions (1–39) are numbered **independently**; the learning log is the complete record. |
 
 ---
 
@@ -828,7 +828,7 @@ RESEND    POST /api/v1/auth/verify-email/resend  { "email": "…" }
 
 ---
 
-## 1.5 — Login, lockout, login history (briefed 2026-09-27 · decisions D1–D5 accepted 2026-09-27, decisions 17–22)
+## 1.5 — Login, lockout, login history ✅ built (`aa7efca`, `a2cd682`; **tests, mutation checks, timing and deliberate failures 2, 4–8 deferred**, see the learning log)
 
 > **Estimate, honestly:** the plan says ~1h 45m. This section has more moving parts than §1.4 (a provider, a listener, a new table, two endpoints), so **~3h is realistic**. If it runs over, trim in the phase's order: the login-history **endpoint** goes first (keep **recording** the events).
 > **Carried in from §1.4:** record `EMAIL_VERIFIED` from the verify flow once `security_events` exists.
@@ -1099,100 +1099,100 @@ create trigger trg_security_events_append_only
 Once applied, **V4 is frozen** like V1–V3.
 
 **`IdentifiedEntity`** (`common/persistence`, D4):
-- [ ] A new `@MappedSuperclass` holding only `id` and its sequence generator, moved out of `BaseEntity`.
-- [ ] `BaseEntity` extends it; its audit fields are unchanged.
+- [x] A new `@MappedSuperclass` holding only `id` and its sequence generator, moved out of `BaseEntity`.
+- [x] `BaseEntity` extends it; its audit fields are unchanged.
 
 *Done when:* the existing suite is green and no table's columns changed (`ddl-auto: validate` passes).
 
 **`LockoutProperties`** (`user` package, a record like `TokenProperties`):
-- [ ] `taskflow.security.lockout.max-failed-attempts` (at least 1) and `taskflow.security.lockout.duration` (positive), validated at startup.
-- [ ] `application.yml` sets the D2 values (5, `15m`).
+- [x] `taskflow.security.lockout.max-failed-attempts` (at least 1) and `taskflow.security.lockout.duration` (positive), validated at startup.
+- [x] `application.yml` sets the D2 values (5, `15m`).
 
 *Done when:* a missing or non-positive value stops startup with a message naming the property.
 
 **`TaskflowSecurityConfig`:**
-- [ ] One `DaoAuthenticationProvider` bean, built from the `UserDetailsService` and the `PasswordEncoder`.
-- [ ] Its pre-checks reject only a locked account (`LockedException`).
-- [ ] Its post-checks reject an unverified account (`DisabledException`).
-- [ ] `alwaysPerformAdditionalChecksOnUser` isn't changed.
-- [ ] An `AuthenticationManager` bean that returns `AuthenticationConfiguration.getAuthenticationManager()`; nothing calls `new ProviderManager(…)`.
+- [x] One `DaoAuthenticationProvider` bean, built from the `UserDetailsService` and the `PasswordEncoder`.
+- [x] Its pre-checks reject only a locked account (`LockedException`).
+- [x] Its post-checks reject an unverified account (`DisabledException`).
+- [x] `alwaysPerformAdditionalChecksOnUser` isn't changed.
+- [x] An `AuthenticationManager` bean that returns `AuthenticationConfiguration.getAuthenticationManager()`; nothing calls `new ProviderManager(…)`.
 
 *Done when:* the startup log says *"Global AuthenticationManager configured with AuthenticationProvider bean with name …"* (plus the expected `WARN`), and never *"…configured with UserDetailsService bean…"*.
 
 **`UserAccountRepository`**, four new queries:
-- [ ] `findIdByEmail(email)` → an optional id.
-- [ ] `incrementFailedLoginAttempts(id)`: one `UPDATE` adding 1 in SQL; returns the row count.
-- [ ] `lockIfThresholdReached(id, maxAttempts, lockedUntil)`: sets `locked_until` and the counter to 0, only where the counter ≥ `maxAttempts`; returns the row count.
-- [ ] `resetFailedLoginAttempts(id)`: counter to 0 and `locked_until` to null, only where either is set; returns the row count.
+- [x] `findIdByEmail(email)` → an optional id.
+- [x] `incrementFailedLoginAttempts(id)`: one `UPDATE` adding 1 in SQL; returns the row count.
+- [x] `lockIfThresholdReached(id, maxAttempts, lockedUntil)`: sets `locked_until` and the counter to 0, only where the counter ≥ `maxAttempts`; returns the row count.
+- [x] `resetFailedLoginAttempts(id)`: counter to 0 and `locked_until` to null, only where either is set; returns the row count.
 
 *Done when:* the JPA slice tests below pass.
 
 **`LoginAttemptService`** (`user` package):
-- [ ] `recordFailure(rawEmail, ip)` runs in `REQUIRES_NEW`.
-- [ ] It normalises the email; an unknown email does nothing.
-- [ ] It increments, then tries to lock with `lockedUntil = now (Clock) + duration`.
-- [ ] When the lock `UPDATE` returns 1, it records `ACCOUNT_LOCKED` with the IP, in the same transaction.
-- [ ] `recordSuccess(accountId)` runs in `REQUIRES_NEW` and calls the conditional reset.
+- [x] `recordFailure(rawEmail, ip)` runs in `REQUIRES_NEW`.
+- [x] It normalises the email; an unknown email does nothing.
+- [x] It increments, then tries to lock with `lockedUntil = now (Clock) + duration`.
+- [x] When the lock `UPDATE` returns 1, it records `ACCOUNT_LOCKED` with the IP, in the same transaction.
+- [x] `recordSuccess(accountId)` runs in `REQUIRES_NEW` and calls the conditional reset.
 
 *Done when:* with a fixed `Clock`, the 5th failure locks until exactly now + 15m and records one `ACCOUNT_LOCKED`; the 4th doesn't.
 
 **`AuthenticationEventsListener`** (`user` package, a separate bean):
-- [ ] On `AuthenticationFailureBadCredentialsEvent`: `recordFailure(name, ip from WebAuthenticationDetails or null)`.
-- [ ] On `AuthenticationSuccessEvent` with a `TaskflowPrincipal`: `recordSuccess(id)`.
-- [ ] It handles no other event (locked and disabled failures don't count).
-- [ ] It's synchronous: no `@Async`.
+- [x] On `AuthenticationFailureBadCredentialsEvent`: `recordFailure(name, ip from WebAuthenticationDetails or null)`.
+- [x] On `AuthenticationSuccessEvent` with a `TaskflowPrincipal`: `recordSuccess(id)`.
+- [x] It handles no other event (locked and disabled failures don't count).
+- [x] It's synchronous: no `@Async`.
 
 *Done when:* 5 wrong passwords lock the account through `/auth/login` **and** through a Basic header.
 
 **Security events** (`user/event`: `SecurityEventType`, `LoginFailureReason`, `SecurityEvent`, `SecurityEventRepository`, `SecurityEventRecorder`):
-- [ ] Both enums match the `CHECK` lists and are stored as `STRING`.
-- [ ] `SecurityEvent` extends `IdentifiedEntity`, is `@Immutable`, has a protected no-arg constructor, no setters, and one factory per event type.
-- [ ] `userAccountId` is a plain `Long`; `ipAddress` is an `InetAddress`; `occurredAt` is an `Instant`.
-- [ ] The repository pages a user's events filtered by type.
-- [ ] `SecurityEventRecorder.record…` methods are `@Transactional` (`REQUIRED`) and take "now" from the `Clock`.
-- [ ] The IP string becomes an `InetAddress` in **one** place, only when it isn't null (see *Traps*).
+- [x] Both enums match the `CHECK` lists and are stored as `STRING`.
+- [x] `SecurityEvent` extends `IdentifiedEntity`, is `@Immutable`, has a protected no-arg constructor, no setters, and one factory per event type.
+- [x] `userAccountId` is a plain `Long`; `ipAddress` is an `InetAddress`; `occurredAt` is an `Instant`.
+- [x] The repository pages a user's events filtered by type.
+- [x] `SecurityEventRecorder.record…` methods are `@Transactional` (`REQUIRED`) and take "now" from the `Clock`.
+- [x] The IP string becomes an `InetAddress` in **one** place, only when it isn't null (see *Traps*).
 
 *Done when:* an event saves and reads back with its `inet` value, and a native `UPDATE` on it throws.
 
 **`ClientInfo`** (`common/web`, a record):
-- [ ] `ClientInfo.from(HttpServletRequest)` takes the IP from `getRemoteAddr()` and the `User-Agent` header.
-- [ ] The user agent is cut to 512 characters; a missing header stays null.
+- [x] `ClientInfo.from(HttpServletRequest)` takes the IP from `getRemoteAddr()` and the `User-Agent` header.
+- [x] The user agent is cut to 512 characters; a missing header stays null.
 
 *Done when:* a 600-character user agent comes out as 512 characters.
 
 **`LoginRequest`** (`user` package):
-- [ ] `email`: `@NotBlank`, `@Size(max = 254)`.
-- [ ] `password`: `@NotBlank`, `@MaxUtf8Bytes(72)`, **no minimum length**.
-- [ ] `toString()` masks the password.
+- [x] `email`: `@NotBlank`, `@Size(max = 254)`.
+- [x] `password`: `@NotBlank`, `@MaxUtf8Bytes(72)`, **no minimum length**.
+- [x] `toString()` masks the password.
 
 **`UserErrorCode`** and an exception:
-- [ ] `AUTHENTICATION_FAILED` (401) and `EMAIL_NOT_VERIFIED` (403).
-- [ ] A `LoginFailedException` (extends `ApplicationException`) carries either code.
-- [ ] The 401's `detail` is one fixed sentence that mentions neither the email nor the lock (e.g. "Invalid email or password. Sign-in pauses after repeated failures.").
+- [x] `AUTHENTICATION_FAILED` (401) and `EMAIL_NOT_VERIFIED` (403).
+- [x] A `LoginFailedException` (extends `ApplicationException`) carries either code.
+- [x] The 401's `detail` is one fixed sentence that mentions neither the email nor the lock (e.g. "Invalid email or password. Sign-in pauses after repeated failures.").
 
 **`LoginService`** (`user` package, **not** `@Transactional`):
-- [ ] It builds an unauthenticated token from the typed email and password, with `WebAuthenticationDetails(ip, null)` as its details.
-- [ ] It calls the `AuthenticationManager`.
-- [ ] On success it records `LOGIN_SUCCEEDED` and returns the account summary.
-- [ ] `BadCredentialsException` → records `LOGIN_FAILED(BAD_CREDENTIALS)` if the account exists → 401.
-- [ ] `LockedException` → records `LOGIN_FAILED(ACCOUNT_LOCKED)` → 401, the same body.
-- [ ] `DisabledException` → records `LOGIN_FAILED(EMAIL_NOT_VERIFIED)` → 403.
-- [ ] Any other exception propagates unchanged.
-- [ ] It never touches `SecurityContextHolder` (stateless: nothing would keep it).
+- [x] It builds an unauthenticated token from the typed email and password, with `WebAuthenticationDetails(ip, null)` as its details.
+- [x] It calls the `AuthenticationManager`.
+- [x] On success it records `LOGIN_SUCCEEDED` and returns the account summary.
+- [x] `BadCredentialsException` → records `LOGIN_FAILED(BAD_CREDENTIALS)` if the account exists → 401.
+- [x] `LockedException` → records `LOGIN_FAILED(ACCOUNT_LOCKED)` → 401, the same body.
+- [x] `DisabledException` → records `LOGIN_FAILED(EMAIL_NOT_VERIFIED)` → 403.
+- [x] Any other exception propagates unchanged.
+- [x] It never touches `SecurityContextHolder` (stateless: nothing would keep it).
 
 *Done when:* unknown email, wrong password and locked return bodies identical except `timestamp` and `correlationId`.
 
 **`AuthController`:**
-- [ ] `POST /login` → `@Valid LoginRequest` → `LoginService` with `ClientInfo.from(request)` → 200.
-- [ ] `POST /verify-email` passes `ClientInfo` through; verification records `EMAIL_VERIFIED` in its own transaction.
+- [x] `POST /login` → `@Valid LoginRequest` → `LoginService` with `ClientInfo.from(request)` → 200.
+- [x] `POST /verify-email` passes `ClientInfo` through; verification records `EMAIL_VERIFIED` in its own transaction.
 
 *Done when:* a verify creates one `EMAIL_VERIFIED` row; a failed verify creates none.
 
 **`UserController`** (`user` package, `@RequestMapping("/api/v1/users/me")`; §1.7 adds the profile here) and a small read service:
-- [ ] `GET /login-history` takes `page` and `size`, and the id from `@AuthenticationPrincipal`.
-- [ ] Types shown: `LOGIN_SUCCEEDED`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`.
-- [ ] The sort is fixed: `occurredAt` desc, then `id` desc (pass it to `PageableFactory` explicitly).
-- [ ] The query runs in a `readOnly` transaction.
+- [x] `GET /login-history` takes `page` and `size`, and the id from `@AuthenticationPrincipal`.
+- [x] Types shown: `LOGIN_SUCCEEDED`, `LOGIN_FAILED`, `ACCOUNT_LOCKED`.
+- [x] The sort is fixed: `occurredAt` desc, then `id` desc (pass it to `PageableFactory` explicitly).
+- [x] The query runs in a `readOnly` transaction.
 
 *Done when:* two users each see only their own rows, newest first, and repeated Basic calls add no rows.
 

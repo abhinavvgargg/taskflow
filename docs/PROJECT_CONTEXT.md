@@ -268,6 +268,6 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 > Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3. Then read the current phase's `docs/phase-N/PHASE_N_REQUIREMENTS.md` and `PHASE_N_LEARNING_LOG.md`, and the testing guides. We're on **§N.x** — brief it in the section 3.1 layout; requirements, not code.
 
-**Resuming right now (2026-09-27):**
+**Resuming right now (2026-09-29):**
 
-> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.4 are done. **§1.5 (login, lockout, login history) is briefed and its decisions are settled (17–22, 2026-09-27)**; I'm implementing it from build-order step 2. Review my code when I share it (step 3 of the build loop).
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.5 are done (tests for §1.3–§1.5 deferred as debt). Brief **§1.6 (password reset & password change)** in the section 3.1 layout, raising its open decisions first. Requirements, not code; SQL for any schema change.
