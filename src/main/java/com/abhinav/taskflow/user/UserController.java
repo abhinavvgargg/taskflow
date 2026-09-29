@@ -24,7 +24,7 @@ public class UserController {
 
     @GetMapping("/login-history")
     public ResponseEntity<PageResponse<LoginHistoryResponse>> getLoginHistory(@AuthenticationPrincipal(errorOnInvalidType = true) TaskflowPrincipal taskflowPrincipal, PageQuery pageQuery) {
-        Pageable pageable = pageableFactory.of(pageQuery.page(), pageQuery.size(), LoginHistoryService.SORT, Set.of("occurredAt"));
+        Pageable pageable = pageableFactory.of(pageQuery.page(), pageQuery.size(), LoginHistoryService.SORT, Set.of("occurredAt", "id"));
         return ResponseEntity.ok(PageResponse.from(loginHistoryService.getLoginHistory(taskflowPrincipal.getId(), pageable)));
     }
 }
