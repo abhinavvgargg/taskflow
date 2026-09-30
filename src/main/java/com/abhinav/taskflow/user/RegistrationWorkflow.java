@@ -1,10 +1,6 @@
 package com.abhinav.taskflow.user;
 
-import com.abhinav.taskflow.common.config.FrontendProperties;
 import com.abhinav.taskflow.common.error.CommonErrorUtility;
-import com.abhinav.taskflow.common.mail.EmailMessage;
-import com.abhinav.taskflow.common.mail.EmailSender;
-import com.abhinav.taskflow.user.token.IssuedToken;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -25,15 +21,14 @@ public class RegistrationWorkflow {
     private static final String ONE_ACTIVE_TOKEN_CONSTRAINT = "uk_user_tokens_active";
 
     private final UserRegistrationService userRegistrationService;
-    private final EmailSender emailSender;
-    private final FrontendProperties frontendProperties;
+    private final AccountEmails accountEmails;
 
     public UserAccountResponse registerAndSendEmail (RegisterRequest registerRequest) {
 
         RegistrationResult result = userRegistrationService.registerUser(registerRequest);   // committed on return
         UserAccountResponse account = result.userAccountResponse();
 
-        sendVerificationEmail(account.id(), account.email(), result.issuedToken());
+        accountEmails.sendVerificationEmail(account.id(), account.email(), result.issuedToken());
         return account;
     }
 
@@ -55,17 +50,6 @@ public class RegistrationWorkflow {
             throw e;
         }
 
-        toSend.ifPresent(v -> sendVerificationEmail(v.accountId(), v.email(), v.issuedToken()));
-    }
-
-    /** The one place a verification link is built and sent. A failure is logged, never propagated. */
-    private void sendVerificationEmail (Long accountId, String email, IssuedToken token) {
-        String link = frontendProperties.frontendBaseUrl() + "/verify-email#token=" + token.value();
-        try {
-            emailSender.send(new EmailMessage(email, "Verify your email address", link));
-        } catch (Exception e) {
-            // The account id only: never the email (PII) or the link (it contains the token).
-            log.error("Failed to send verification email for account id={}", accountId, e);
-        }
+        toSend.ifPresent(v -> accountEmails.sendVerificationEmail(v.accountId(), v.email(), v.issuedToken()));
     }
 }

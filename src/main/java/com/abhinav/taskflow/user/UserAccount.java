@@ -3,12 +3,14 @@ package com.abhinav.taskflow.user;
 import com.abhinav.taskflow.common.persistence.BaseEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
+import org.hibernate.annotations.DynamicUpdate;
 
 import java.time.Instant;
 
 @Entity
 @Table(name = "user_accounts")
 @Getter
+@DynamicUpdate
 public class UserAccount extends BaseEntity {
 
     private String email;
@@ -47,6 +49,19 @@ public class UserAccount extends BaseEntity {
     public void changePassword(String newPasswordHash, Instant passwordChangedAt) {
         this.passwordHash = newPasswordHash;
         this.passwordChangedAt = passwordChangedAt;
+    }
+
+    public boolean resetPassword(String newPasswordHash, Instant passwordChangedAt) {
+        this.passwordHash = newPasswordHash;
+        this.passwordChangedAt = passwordChangedAt;
+        this.failedLoginAttempts = 0;
+        this.lockedUntil = null;
+
+        if (this.emailVerifiedAt == null) {
+            this.emailVerifiedAt = passwordChangedAt;
+            return true;
+        }
+        return false;
     }
 
     private void setRole(UserRole role) {

@@ -18,10 +18,10 @@ public class AuthController {
     private final UserRegistrationService userRegistrationService;
     private final RegistrationWorkflow registrationWorkflow;
     private final LoginService loginService;
+    private final PasswordWorkflow passwordWorkflow;
 
     @PostMapping("/register")
-    public ResponseEntity<UserAccountResponse> registerUserAccount (@Valid @RequestBody RegisterRequest registerRequest)
-    {
+    public ResponseEntity<UserAccountResponse> registerUserAccount (@Valid @RequestBody RegisterRequest registerRequest) {
         UserAccountResponse userAccountResponse = registrationWorkflow.registerAndSendEmail(registerRequest);
         return ResponseEntity.status(HttpStatus.CREATED).body(userAccountResponse);
     }
@@ -42,5 +42,17 @@ public class AuthController {
     public ResponseEntity<UserAccountResponse> login (@Valid @RequestBody LoginRequest loginRequest, HttpServletRequest request) {
         UserAccountResponse userAccountResponse = loginService.login(loginRequest, ClientInfo.from(request));
         return ResponseEntity.ok(userAccountResponse);
+    }
+
+    @PostMapping("/password-reset/request")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public void requestPasswordReset (@Valid @RequestBody PasswordResetRequest passwordResetRequest) {
+        passwordWorkflow.requestReset(passwordResetRequest.email());
+    }
+
+    @PostMapping("/password-reset/confirm")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void confirmPasswordReset (@Valid @RequestBody PasswordResetConfirmRequest passwordResetConfirmRequest, HttpServletRequest request) {
+        passwordWorkflow.confirmReset(passwordResetConfirmRequest.token(), passwordResetConfirmRequest.newPassword(), ClientInfo.from(request));
     }
 }

@@ -3,17 +3,17 @@
 > Companion to `../PROJECT_CONTEXT.md` · decisions and traps from `../phase-0/PHASE_0_LEARNING_LOG.md` · test patterns from `../phase-0/TESTING_GUIDE.md`. Requirements only, no code. Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** Anything unfinished becomes a side task in Phase 2. The phase doesn't get extended.
 
-## ▶ Where we are (resume here) — updated 2026-09-29
+## ▶ Where we are (resume here) — updated 2026-10-01
 
 | | |
 |---|---|
-| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) |
-| **Next** | **§1.6 — Password reset & password change.** Not yet briefed: the section below still has the old notes. Brief it fresh in the `PROJECT_CONTEXT.md` §3.1 layout (best approach, SQL for any schema change, plain requirements). |
-| **Decisions to raise first in §1.6** | Does a successful reset **clear the lockout**? · Does it **verify** an unverified email? · Justify the reset token TTL (configured `30m`) · What happens to other outstanding reset tokens, and should reset/change record `PASSWORD_RESET` / `PASSWORD_CHANGED` in the same transaction (the §1.5 rule says yes). Already settled: **decision 22** (wrong `currentPassword` → 400, counts toward lockout). |
-| **Carried into §1.6** | `SecurityEventRecorder.recordPasswordReset` / `recordPasswordChanged` already exist; the `PASSWORD_RESET` token purpose and `password-reset-ttl` config exist (§1.4); `LoginFailedException` and the `AuthenticationManager` bean exist for re-authentication (decision 22). |
-| **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: **§1.3, §1.4 and §1.5 tests** (planned lists there), §1.5 mutation checks and timing measurement, deliberate failures not run (§1.3 race, §1.4 list, §1.5 #2 and #4–8), resend timing leak, bcrypt timing not measured, small nits |
+| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) · §1.6 password reset & change (**built and reported working 2026-10-01, not yet committed**; tests not written) |
+| **Next** | **Finish §1.6:** set the two `field` properties (learning log §8), decide §1.6 tests (write or defer), commit. **Then decide §1.7 (profile):** Phase 1 is past its time-box, and §1.7 is first on the trim list (`PROJECT_CONTEXT.md` §3.7: ship what works), so the recommendation is to **move it to a later sub-phase** and record the move. **Then close Phase 1:** walk the Definition of done below, update the README (auth endpoints, dev verification link, Basic note), and write the 15-minute Phase 1 notes. |
+| **Decisions to raise next** | §1.6 tests: write now or defer (decision 46) · §1.7: trim (recommended) or build · whether any deferred tests (§1.3–§1.6) must land before Phase 2 starts |
+| **Carried forward** | Nothing blocks Phase 2. `password_changed_at` is stamped by reset and change, ready for Phase 2's "reject tokens issued before it". |
+| **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: **§1.3–§1.6 tests** (planned lists there), §1.5 mutation checks and timing measurement, deliberate failures not run (§1.3 race, §1.4 list, §1.5 #2 and #4–8, §1.6 #1, #2, #4, #5), resend timing leak, bcrypt timing not measured, small nits |
 | **Environment state** | Dev DB has migrations **V1–V4** applied (**all frozen**: never edit an applied migration). Dev users include `alice` (ADMIN, verified), `bob` (unverified), `carol` (verified), plus accounts from manual runs; `security_events` holds rows from the §1.5 manual runs, and carol may be locked or have a non-zero counter (reset: `update user_accounts set failed_login_attempts = 0, locked_until = null where username = 'carol';`). Suite: last confirmed 76/76 at §1.4; not re-run after §1.5 (the two web slices pass). |
-| **Numbering note** | This doc's Decisions table (1–22) and the learning log's decisions (1–39) are numbered **independently**; the learning log is the complete record. |
+| **Numbering note** | This doc's Decisions table (1–27) and the learning log's decisions (1–46) are numbered **independently**; the learning log is the complete record. |
 
 ---
 
@@ -62,6 +62,11 @@
 | 20 | **Security-event retention** (§1.5 D3), decided 2026-09-27 | **12 months, then deleted by Phase 9's cleanup job** (stance only, nothing built) | IP addresses are personal data (GDPR storage limitation); 12 months covers investigating a compromised account. |
 | 21 | **Append-only `security_events`** (§1.5 D4), decided 2026-09-27 | **Id-only `@MappedSuperclass` split out of `BaseEntity`; `SecurityEvent` extends it, is `@Immutable`; a row-level trigger rejects every `UPDATE`** | No meaningless `updated_*` columns and no second clock. `@Immutable` alone ignores changes silently (Hibernate Javadoc); the trigger makes any writer's mistake loud. |
 | 22 | **Wrong `currentPassword` on password change** (§1.6, decided early in §1.5 D5, 2026-09-27) | **400 `CURRENT_PASSWORD_INCORRECT`, `field: currentPassword`; counts toward lockout** (checked through the same `AuthenticationManager`) | Not 401: a Phase 2 client would log the user out. 400 over 403: it's one wrong form field. Counting closes the "stolen token + unlimited current-password guesses" path. |
+| 23 | **Reset clears the lockout** (§1.6 D1), decided 2026-09-29 | **Yes: counter to 0 and `locked_until` cleared, in the reset's entity write** | A reset proves mailbox control, stronger than any guess; otherwise the correct new password gets 401 for up to 15 minutes. |
+| 24 | **Reset verifies an unverified email** (§1.6 D2), decided 2026-09-29 | **Yes; also revokes the active verification token and records `EMAIL_VERIFIED`** | Clicking a link sent to the address is the proof verification asks for; otherwise a second email and a 403 after a successful reset. |
+| 25 | **Reset token lifetime** (§1.6 D3), decided 2026-09-29 | **30 minutes** (the configured `password-reset-ttl`) | Covers slow mail; a reset link is a takeover credential, so exposure stays short. Verification keeps 24h: its worst case is far milder. |
+| 26 | **Notify the owner after a reset or change** (§1.6 D4), decided 2026-09-29 | **Yes: "your password was changed" to the stored address, after commit; a failure is logged, not propagated** | The owner learns of a takeover while they can still act (OWASP forgot-password guidance). |
+| 27 | **Whole-row writes on `user_accounts`** (§1.6 D5), decided 2026-09-29 | **`@DynamicUpdate` on `UserAccount`; every §1.6 account change through entity methods** | Verified: without it, the entity write undoes a bulk unlock; `clearAutomatically` loses the password change; and any load-then-save flow can erase a concurrent lock. |
 
 ---
 
@@ -99,7 +104,7 @@ Every section follows the same order, so you know **what** you're building and *
 8. **Build order**
 9. **Tests**
 
-§1.1–§1.5 are written this way; §1.6 onward get the same treatment when we reach them.
+§1.1–§1.6 are written this way; §1.7 onward get the same treatment when we reach them.
 
 ---
 
@@ -1312,21 +1317,343 @@ update user_accounts set failed_login_attempts = 0, locked_until = null where us
 
 ---
 
-## 1.6 — Password reset & password change (~1h)
+## 1.6 — Password reset & password change ✅ built (uncommitted at 2026-10-01; **two `field` properties still open, tests not written**, see the learning log)
 
-**Reset (the user is anonymous):**
-- [ ] `POST /api/v1/auth/password-reset/request` with `{email}` → **always 202**. Unknown email, unverified email, locked account: every case gets the identical response.
-- [ ] ⚠️ **Timing still leaks:** a known email does a DB write and sends an email, and an unknown one returns straight away. **Note it; don't fix it.** Phase 9's async sending removes most of the gap. Have the answer ready.
-- [ ] Token rules as in §1.4, with purpose `PASSWORD_RESET` and a **much shorter** TTL, separately configured. Justify the number.
-- [ ] `POST /api/v1/auth/password-reset/confirm` with `{token, newPassword}` → 204, all in **one transaction**: consume the token (conditional `UPDATE`), set the new hash, stamp `password_changed_at`, **invalidate every other outstanding reset token** for that user, and record `PASSWORD_RESET`.
-- [ ] 🏗️ Does a successful reset **also clear the lockout**? (Recommended: yes. Proving you own the email is stronger evidence than the lockout guards against.) Does it **also verify** an unverified email? Decide both.
-- [ ] 📊 **Race it**, as with the Phase 0 slug: fire 20 concurrent confirms with the same token. **Exactly one** 204, the rest 400, zero 500s.
+> **Time-box, honestly:** Phase 1 was budgeted at 7h (hard stop 10.5h), and §1.1–§1.5 have almost certainly used that. `PROJECT_CONTEXT.md` §3.7 says: ship what works. So each decision below also names its **cheaper option**, and the phase's trim order still applies: §1.7 (profile) goes first.
+> **No schema change in §1.6.** `user_tokens` already accepts `PASSWORD_RESET`, `security_events` already accepts `PASSWORD_RESET` / `PASSWORD_CHANGED`, and `user_accounts` has `password_changed_at`. D5 is a mapping change, not a migration.
+> **Rewritten from the old notes (2026-09-25).** Everything in them is kept below; decision 22 (a wrong `currentPassword`) was settled in §1.5.
 
-**Change (the user is authenticated):**
-- [ ] `PUT /api/v1/users/me/password` with `{currentPassword, newPassword}` → 204. **Re-authentication:** a valid Basic header isn't enough, so `currentPassword` must match. The new password has to differ from the current one. Stamp `password_changed_at` and record `PASSWORD_CHANGED`.
-- [x] 🏗️ **What status for a wrong `currentPassword`?** **Decided 2026-09-27 (decision 22): 400 `CURRENT_PASSWORD_INCORRECT` with `field: currentPassword`, and it counts toward lockout** by checking the current password through the same `AuthenticationManager`. ⚠️ **Not 401.** A 401 tells the client "you are not authenticated", and a well-behaved client (Phase 2) throws away its tokens and logs the user out. The user *is* authenticated; they got one field wrong.
+### 🏗️ Decisions ✅ all five recommendations accepted 2026-09-29 (Decisions table rows 23–27)
 
-🎯 **Interview question:** "After a password change, what happens to the user's other logged-in devices?" Today: nothing, and you know that. Phase 2: every token issued before `password_changed_at` gets rejected. That's why the column exists now.
+**Verified before writing these** (Hibernate 6.6.53, on a scratch copy of the project with a Testcontainers database, 2026-09-29):
+
+| In one transaction | Result |
+|---|---|
+| Clear the lock with `resetFailedLoginAttempts` (bulk `UPDATE`), then change the password through the loaded entity | Hibernate's entity `UPDATE` sets **every column**: `failed_login_attempts = 5`, `locked_until` back. The unlock was undone, with no error. |
+| The same, with `@Modifying(clearAutomatically = true)` | The unlock stayed, but clearing detached the loaded entity: **the new password was never written**. No error. |
+| `@DynamicUpdate` on `UserAccount` | The entity `UPDATE` listed only `password_changed_at`, `password_hash`, `updated_at`. Both changes survived. |
+
+#### D1 — Does a successful reset clear the lockout?
+
+**Recommended: yes**, and it resets the counter too.
+- **Why:** the lock exists to stop someone **guessing** the password. A reset proves control of the mailbox, which is stronger evidence than any guess, and the old password stops mattering the moment it's replaced.
+- **The alternative (no) and its failure:** a user who locked themselves out by forgetting the password resets it, then gets "invalid email or password" for up to 15 minutes **with the correct new password**. They assume the reset failed and reset again.
+- **Cost:** none. It's two fields in the same entity write.
+
+#### D2 — Does a successful reset verify an unverified email?
+
+**Recommended: yes.** It also revokes the account's active verification link and records `EMAIL_VERIFIED`.
+- **Why:** clicking a link sent to the address is exactly the proof verification asks for.
+- **The alternative (no) and its failure:** an unverified user who forgot their password resets it and gets **403 `EMAIL_NOT_VERIFIED`**. Now they need a second email and a second click, for something they've already proven.
+- **The revoke** keeps the "one live link" rule honest: an old verification link that still worked would do nothing harmful, but nothing useful either.
+- **Cheaper option:** verify, but skip the revoke. The old link then only re-stamps `email_verified_at`, which is the known §1.4 nit.
+
+#### D3 — The reset token's lifetime
+
+**Recommended: keep the configured `30m`.**
+
+| Option | The problem |
+|---|---|
+| 15 minutes | Delayed corporate mail and greylisting can take longer; the user gets an expired link and requests again |
+| **30 minutes** | Room for slow mail; a leaked link is only useful for half an hour |
+| 1 hour | Double the exposure of a forwarded or screenshotted link, for little gain |
+| 24 hours (like verification) | A reset link **is** account takeover. A day-old link in a shared inbox, a backup or a mail log is a live credential. |
+
+Verification can live 24h because its worst case is "someone verified an address they didn't sign up with"; a reset link's worst case is losing the account.
+
+#### D4 — Notify the owner by email after a reset or a change?
+
+**Recommended: yes.** After commit, send the stored address "Your password was changed. If this wasn't you, reset it now." A send failure is logged by account id and doesn't fail the request.
+- **Why:** it's the only way the real owner learns about a takeover while they can still act. Most takeovers are discovered this way, and OWASP's forgot-password guidance recommends it.
+- **The alternative (no) and its failure:** an attacker who got into the mailbox or a live session changes the password, and the owner finds out days later, when they're already locked out.
+- **Cheaper option:** defer it to Phase 9, which builds notifications anyway. It's one more email template and one send-after-commit.
+
+#### D5 — Protect `user_accounts` from whole-row writes
+
+The lockout counter is written by bulk SQL (§1.5), and everything else through the entity. The verified table above shows what happens when they meet.
+
+| Option | What it does | The problem |
+|---|---|---|
+| **a. Recommended: `@DynamicUpdate` on `UserAccount`, and every §1.6 change through entity methods** | Entity writes touch only the columns that changed | Hibernate builds the `UPDATE` per flush instead of reusing one statement: negligible at this scale |
+| b. Only the rule "never mix bulk and entity writes in one transaction" | Avoids the verified failures if everyone remembers | A change-password transaction that loads the account, then commits after a concurrent wrong-password guess applied a lock, writes back the **old** counter and `locked_until = null`: **the lock is erased**. The same is true today for `verify`. The window is milliseconds, but it's a silent unlock during exactly the attack lockout exists for. |
+| c. `@Version` on `UserAccount` | Detects the conflict | The bulk counter queries don't bump the version, so it doesn't see them; and every real conflict becomes a 409 or 500 on a password change |
+| d. `clearAutomatically = true` | — | Verified: the entity change is silently lost |
+
+---
+
+### What we're building
+
+**Getting back in when you've forgotten your password, and changing it when you know it.**
+
+1. **Forgot it:** `POST /api/v1/auth/password-reset/request` with `{email}` → **always 202**, whatever the email. If the account exists, its owner gets a link: `{frontend-base-url}/reset-password#token=…`.
+2. **Set a new one:** `POST /api/v1/auth/password-reset/confirm` with `{token, newPassword}` → **204**. The link works once, for 30 minutes. It also unlocks the account (D1) and verifies the email (D2). Then the owner is notified (D4).
+3. **Change it while signed in:** `PUT /api/v1/users/me/password` with `{currentPassword, newPassword}` → **204**. The current password must be correct (checked like a login, so it counts toward lockout, decision 22). The new one must differ. Any outstanding reset link stops working. Then the owner is notified (D4).
+4. **Every change is recorded:** `PASSWORD_RESET` or `PASSWORD_CHANGED` (and `EMAIL_VERIFIED` when a reset verifies), in the same transaction as the change.
+
+**Out of scope, on purpose:**
+
+| Not in §1.6 | Where it goes |
+|---|---|
+| Signing out other devices after a change | Phase 2: tokens issued before `password_changed_at` are rejected. That's why the column exists now. |
+| Logging the user in automatically after a reset | Not planned (see *Alternatives*) |
+| Rate limiting reset requests (email bombing) | Phase 10 |
+| Removing the reset request's timing leak | Phase 9 (async sending) |
+| Password history ("not one of your last 5") | Not planned: NIST 800-63B doesn't ask for it |
+| Checking new passwords against breach lists | Interview knowledge only (HIBP k-anonymity) |
+| Email change | Not in Phase 1 |
+
+### How we're building it, and why
+
+```
+REQUEST   POST /auth/password-reset/request {email}            → always 202
+  AuthController ─▶ PasswordWorkflow.requestReset(email)           ← NOT transactional
+                      ├─ PasswordService.requestReset(email)  @Transactional
+                      │     account by normalised email? (unknown → nothing)
+                      │     UserTokenService.issue(account, PASSWORD_RESET)   revokes the previous link (decision 12)
+                      │     returns Optional<ResetToSend(accountId, storedEmail, token)>  ── COMMIT ──
+                      ├─ a concurrent request hit uk_user_tokens_active → the other one sends; return (as §1.4 resend)
+                      └─ AccountEmails.sendPasswordReset(...)   after commit; a failure is logged, never propagated
+
+CONFIRM   POST /auth/password-reset/confirm {token, newPassword}   (newPassword validated at the boundary first)
+  AuthController ─▶ PasswordWorkflow.confirmReset(...)
+                      ├─ PasswordService.confirmReset(token, newPassword, clientInfo)  @Transactional
+                      │     UserTokenService.consume(token, PASSWORD_RESET)   one conditional UPDATE: one winner
+                      │     hash newPassword (only now: a bad token never costs a bcrypt)
+                      │     account.resetPassword(hash, now)   hash, password_changed_at, counter 0, lock cleared (D1),
+                      │                                         email verified if it wasn't (D2) → returns whether it verified
+                      │     if it verified: revoke the active EMAIL_VERIFICATION token, record EMAIL_VERIFIED
+                      │     record PASSWORD_RESET                                                ── COMMIT ──
+                      └─ AccountEmails.sendPasswordChanged(...)   (D4)                      → 204
+
+CHANGE    PUT /users/me/password {currentPassword, newPassword}    (authenticated)
+  UserController ─▶ PasswordWorkflow.changePassword(principal, request, clientInfo)
+                      ├─ newPassword equals currentPassword?  → 400 PASSWORD_UNCHANGED   (plain string compare, no bcrypt)
+                      ├─ AuthenticationManager.authenticate(principal's email, currentPassword)   ← the §1.5 manager:
+                      │     wrong or locked → 400 CURRENT_PASSWORD_INCORRECT                       counts toward lockout
+                      ├─ PasswordService.applyChange(accountId, newPassword, clientInfo)  @Transactional
+                      │     account.changePassword(hash, now) · revoke the active PASSWORD_RESET token
+                      │     record PASSWORD_CHANGED                                              ── COMMIT ──
+                      └─ AccountEmails.sendPasswordChanged(...)   (D4)                      → 204
+```
+
+#### The choices
+
+| Choice | Problem it solves / avoids |
+|---|---|
+| **Reuse §1.4's token machinery with purpose `PASSWORD_RESET`** | Unguessable, hashed at rest, expiring, single-use, purpose-bound, one live link per user (decision 12). A verification token can never reset a password: `consume` filters on the purpose. |
+| **Always 202 on request**, sending only to the **stored** address | No enumeration (unlike registration, decision 7); a request can never send a link to an address the attacker typed |
+| **Link in the URL fragment** (decision 11 again) | The token never reaches a server: not in access logs, proxies or `Referer` |
+| **`PasswordWorkflow` (not transactional) + `PasswordService` (transactional), two beans** | Emails leave only after commit (no phantom resets); re-authentication runs outside any transaction (§1.5's rule); no self-invocation |
+| **Validate `newPassword` at the boundary, before consuming** | A too-short password is a 400 that leaves the link usable. Validated after consuming, the user's only link is burnt by a typo. |
+| **Consume first, hash second** | An invalid or replayed token is rejected by one cheap `UPDATE`, never paying ~100 ms of bcrypt |
+| **All account changes in one entity method per flow** (`resetPassword`, `changePassword`) plus **`@DynamicUpdate`** (D5) | No bulk-plus-entity mix in one transaction (verified failures), and no whole-row write erasing a concurrent lock |
+| **Events in the same transaction as the change** (decision 36's rule) | `PASSWORD_RESET` / `PASSWORD_CHANGED` exist exactly when the change committed |
+| **"Other outstanding reset tokens": nothing extra at confirm** | Decision 12's partial unique index already guarantees at most **one** active reset token, and confirm consumes it. The old notes' "invalidate every other token" is enforced by the database. |
+| **Change revokes the active reset token** | A reset link requested earlier (by the owner, or by someone with mailbox access) can't undo a deliberate change |
+| **Re-authentication through the §1.5 `AuthenticationManager`**, with the **principal's** email | The same checks, events and counter as a login (decision 22). Guessing the current password through this endpoint is as limited as guessing at login. |
+| **`PASSWORD_UNCHANGED` by comparing the two submitted strings** | The current password is about to be proven anyway; comparing it to the new one needs no second bcrypt |
+| **Wrong or locked current password → 400 `CURRENT_PASSWORD_INCORRECT`** (decision 22), and no `LOGIN_FAILED` event | A 401 would log a Phase 2 client out. It's not a login, so it doesn't belong in login history, but it still counts. |
+| **One password policy annotation** (`@ValidPassword`: not blank, ≥ 12 characters, ≤ 72 UTF-8 bytes), used by register, reset and change | The rule lives in one place; reset and change can't drift from registration |
+| **`AccountEmails`, one component for all account emails** (verification, reset, password changed) | One place that builds links from `FrontendProperties`, sends, and logs failures by account id only. §1.4's private send method moves here. |
+
+#### Alternatives we didn't take
+
+| Alternative | Why we didn't take it | The problem it would cause later |
+|---|---|---|
+| **404 or 409 for an unknown email on request** | Enumeration | A free "is this email registered?" oracle, and unlike registration (decision 7) there's no usability excuse |
+| **Sending the link to the email as typed** | The typed form may differ from the stored one | `Alice@x.com` vs `alice@x.com` is harmless, but any future "request by username" variant could send a takeover link to an attacker-chosen address |
+| **The token in a query string, or `GET /confirm?token=`** | Scanners pre-open links; servers log URLs | Corporate mail scanners **consume** the link before the user clicks, or the token sits in proxy logs as a working takeover credential for 30 minutes |
+| **Sending inside the transaction** | Phantom emails | A reset email for a token that rolled back: the link never works, and the user blames the product |
+| **One transactional class for the whole flow** | Re-authentication inside a transaction; sending inside it | The §1.5 connection problem (an outer transaction plus the counter's `REQUIRES_NEW` = two connections per request), and phantom emails |
+| **Validating the new password after consuming** | The token is spent before the check | The user's only link is burnt by a typo; they must request another and wait for mail |
+| **Hashing before consuming** | Every garbage token costs a bcrypt | ~100 ms of CPU per request on an anonymous endpoint: a cheap CPU-exhaustion attack |
+| **Clearing the lock with the §1.5 bulk query in the reset transaction** | It meets the entity write | Verified: the lock comes back (whole-row write), or with `clearAutomatically` the password change is lost |
+| **Logging the user in after a reset** (returning tokens in Phase 2) | Whoever holds the link gets a session without ever knowing the password | A leaked or forwarded link becomes a **session**, not just a password change. The owner's notification (D4) arrives after the attacker is already in. |
+| **Rejecting a reset to the same password as before** | It needs a bcrypt `matches` against the old hash | ~100 ms more per confirm for a rule NIST doesn't ask for; and it tells a link-holder what the old password was **not** |
+| **Re-authenticating with an email from the request body** | The caller is already identified | Confusing at best; at worst, a later refactor applies the change to the principal's account after checking someone else's password |
+| **`passwordEncoder.matches(currentPassword, hash)` instead of the manager** | No event, no counter | The change endpoint becomes an **uncounted** oracle for the current password: with a stolen Phase 2 token, unlimited guesses, then takeover |
+| **401 for a wrong current password** | Decision 22 | A Phase 2 client discards its tokens and logs the user out over a typo |
+| **Recording `LOGIN_FAILED` for a wrong current password** | It isn't a login | Login history shows "failed sign-in" for a user who was signed in the whole time |
+| **Leaving outstanding reset links alive after a change** | — | Someone who requested a link before the owner changed the password can still use it for up to 30 minutes and take the account back |
+| **The password rule copied into each request record** | Three copies | The day the minimum becomes 15, one copy is missed: reset accepts what registration refuses |
+| **A fourth private "send and log" method** | Duplication | Link building and the "never log the email or token" rule drift between three workflows |
+
+### What we're optimising for
+
+1. **A reset link that's useless to anyone but the owner, for as short as practical**: hashed at rest, in the fragment, single-use, 30 minutes, one live at a time.
+2. **No silent partial writes**: the account change, the unlock, the verification and the event commit together, or not at all. No write erases another.
+3. **No new oracles**: request is always 202; the change endpoint is as limited as login.
+4. **The owner finds out** (D4).
+5. **The link survives user mistakes**: a bad new password doesn't burn it.
+
+### Concepts
+
+💡 **Hibernate writes the whole row** (verified above). Without `@DynamicUpdate`, the `UPDATE` for a dirty entity is prepared once per entity and lists **every** mapped column, filled from the entity's in-memory state. So any column another statement changed since the entity was loaded is **overwritten with the stale value**. `@DynamicUpdate` makes Hibernate list only the columns whose values changed. This matters here because `user_accounts` is written two ways: bulk SQL for the counter (§1.5), entities for everything else.
+
+💡 **`clearAutomatically` detaches, silently** (verified). After a bulk query, `clearAutomatically = true` empties the persistence context so later reads see fresh data. Any entity you'd already loaded becomes **detached**: changes to it are never flushed, and nothing warns you. The two flags are for "bulk, then *read*", not "bulk, then *write through an entity*".
+
+💡 **Why the reset link can't live as long as the verification link.** A token's lifetime should match the damage it can do. Verification's worst case is a wrongly verified address; reset's is account takeover. Mail delay is the only argument for longer, and 30 minutes covers it.
+
+💡 **Re-authentication.** Being authenticated proves you *had* the credentials when the session started. Sensitive changes ask again (OWASP), because sessions get stolen, and in Phase 2 a stolen access token would otherwise be enough to take the account over permanently. Checking it through the `AuthenticationManager` means the lockout counter covers this endpoint too.
+
+💡 **Send after commit, again.** The shape is §1.4's `RegistrationWorkflow`: a non-transactional bean calls a transactional one on **another** bean, then sends. It's the third flow with this shape, which is why Phase 9's `@TransactionalEventListener(AFTER_COMMIT)` will be welcome.
+
+💡 **Constraint composition** (Bean Validation). An annotation annotated with other constraints, and `@Constraint(validatedBy = {})`, is a constraint made of those constraints: `@ValidPassword` = `@NotBlank` + `@Size(min = 12)` + `@MaxUtf8Bytes(72)`. Each part still reports its own message unless you add `@ReportAsSingleViolation`.
+
+🎯 **"After a password change, what happens to the user's other logged-in devices?"** Today: nothing, and you know that. Phase 2: every token issued before `password_changed_at` is rejected. That's why the column exists now.
+
+### Requirements
+
+**Endpoints**
+
+| Method | Path | Caller | Body | Success | Errors |
+|---|---|---|---|---|---|
+| `POST` | `/api/v1/auth/password-reset/request` | anyone (already permitted, §1.1) | `{email}` | **202**, empty, for **every** email | **400** `VALIDATION_FAILED` (blank or malformed email) |
+| `POST` | `/api/v1/auth/password-reset/confirm` | anyone (already permitted) | `{token, newPassword}` | **204** | **400** `VALIDATION_FAILED` (policy, before the token is touched) · **400** `INVALID_TOKEN` (unknown, used, expired, revoked, wrong purpose: one answer) |
+| `PUT` | `/api/v1/users/me/password` | authenticated (`/api/v1/**`) | `{currentPassword, newPassword}` | **204** | **400** `VALIDATION_FAILED` · **400** `PASSWORD_UNCHANGED` (`field: newPassword`) · **400** `CURRENT_PASSWORD_INCORRECT` (`field: currentPassword`) · **401** (Basic missing or wrong) |
+
+**Schema:** none (see the note at the top). Mapping change: `@DynamicUpdate` on `UserAccount` (D5).
+
+**`@ValidPassword`** (`common/validator`, a composed constraint):
+- [x] It combines `@NotBlank`, `@Size(min = 12)` and `@MaxUtf8Bytes(72)`.
+- [x] `RegisterRequest.password` uses it instead of its three annotations.
+
+*Done when:* registration still rejects an 11-character and a 73-byte password with the same messages as before.
+
+**Request records** (`user` package), each with a masked `toString()`:
+- [x] `PasswordResetRequest(email)`: `@NotBlank @Email @Size(max = 254)`.
+- [x] `PasswordResetConfirmRequest(token, newPassword)`: `token` `@NotBlank`; `newPassword` `@ValidPassword`.
+- [x] `ChangePasswordRequest(currentPassword, newPassword)`: `currentPassword` `@NotBlank @MaxUtf8Bytes(72)` (no minimum, like login); `newPassword` `@ValidPassword`.
+
+*Done when:* none of them prints a password, a token or an email.
+
+**`UserErrorCode`:**
+- [x] `PASSWORD_UNCHANGED` (400) and `CURRENT_PASSWORD_INCORRECT` (400), thrown with a `field` property.
+
+**`UserAccount`:**
+- [x] `@DynamicUpdate` (D5).
+- [x] `resetPassword(newHash, now)`: sets the hash and `passwordChangedAt`, zeroes the counter, clears `lockedUntil` (D1), sets `emailVerifiedAt` if it's null (D2), and returns whether it verified.
+- [x] `changePassword(newHash, now)` stays as it is.
+
+*Done when:* a reset of a locked, unverified account leaves it unlocked, verified, with a new `password_changed_at`, in one `UPDATE`.
+
+**`AccountEmails`** (`user` package, a `@Component`):
+- [x] `sendVerification`, `sendPasswordReset` and `sendPasswordChanged`, each taking the account id, the stored email, and the token where there is one.
+- [x] Links are built from `FrontendProperties`: `/verify-email#token=…` and `/reset-password#token=…`.
+- [x] A send failure is logged at ERROR with the account id only, and never propagates.
+- [x] `RegistrationWorkflow` uses it instead of its private method.
+
+*Done when:* registration and resend still send exactly as before.
+
+**`PasswordService`** (`user` package, every public method `@Transactional`):
+- [x] `requestReset(rawEmail)`: normalises; unknown → empty; otherwise issues a `PASSWORD_RESET` token and returns what to send.
+- [x] `confirmReset(rawToken, newPassword, clientInfo)`: consumes the token, **then** hashes, then `resetPassword`, then (if it verified) revokes the active verification token and records `EMAIL_VERIFIED`, then records `PASSWORD_RESET`.
+- [x] `applyChange(accountId, newPassword, clientInfo)`: hashes, `changePassword`, revokes the active reset token, records `PASSWORD_CHANGED`.
+- [x] Every `user_accounts` change goes through the entity; no bulk query touches `user_accounts` here.
+
+*Done when:* 20 concurrent confirms with one token give exactly one 204.
+
+**`PasswordWorkflow`** (`user` package, **not** transactional):
+- [x] `requestReset(email)`: calls the service, catches only the `uk_user_tokens_active` race (as §1.4's resend does), then sends after commit.
+- [x] `confirmReset(...)`: calls the service, then sends the "password changed" email (D4).
+- [x] `changePassword(principal, request, clientInfo)`: `PASSWORD_UNCHANGED` check → re-authenticate with the principal's email through the `AuthenticationManager` (details carry the IP) → `BadCredentialsException` / `LockedException` → 400 `CURRENT_PASSWORD_INCORRECT`, anything else propagates → `applyChange` → send (D4).
+
+*Done when:* a wrong current password gives 400 **and** increments `failed_login_attempts`.
+
+**Controllers:**
+- [x] `AuthController`: `POST /password-reset/request` → 202; `POST /password-reset/confirm` → 204, with `ClientInfo.from(request)`.
+- [x] `UserController`: `PUT /password` → 204, with the principal and `ClientInfo.from(request)`.
+
+### Traps ⚠️
+
+**Writes and transactions:**
+- **Bulk plus entity in one transaction** (verified): the entity's whole-row `UPDATE` undoes the bulk change.
+- **`clearAutomatically` to "fix" that** (verified): the loaded entity is detached and its changes vanish.
+- **A whole-row write erasing a concurrent lock** (D5 b): the account loaded before a lock, written after it.
+- **Self-invocation**: the workflow and the transactional service in one class means no transaction at all.
+- **Sending inside the transaction**: a phantom reset email when the commit fails.
+- **Catching the `uk_user_tokens_active` race inside the transaction**: `UnexpectedRollbackException` (§1.4). Catch it in the workflow.
+
+**The reset link:**
+- **Validating the new password after consuming** burns the user's only link on a typo.
+- **Hashing before consuming** lets garbage tokens cost a bcrypt each.
+- **A longer TTL "for convenience"**: a reset link is a takeover credential.
+- **The link in a query string**, or logged anywhere but the dev sender.
+- **Sending to the typed email**, not the stored one.
+- **A different error for used vs expired vs unknown**: one `INVALID_TOKEN`.
+
+**Enumeration and timing:**
+- **Request must be 202 for everything**: unknown, unverified, locked.
+- **Timing still leaks**: a known email writes a token and sends mail; an unknown one returns at once. **Note it; don't fix it.** Phase 9's async sending removes most of the gap. Have the answer ready.
+
+**Change password:**
+- **Checking `currentPassword` with `passwordEncoder.matches`**: an uncounted guessing oracle.
+- **Re-authenticating with an email from the body** instead of the principal.
+- **Not 401** for a wrong current password (decision 22).
+- **Leaving the outstanding reset link alive** after a change.
+- **Records print their secrets**: two passwords in `ChangePasswordRequest`, a token and a password in the confirm request.
+
+**Also:**
+- **`markEmailVerified` overwrites** (§1.4 nit): `resetPassword` must set `emailVerifiedAt` only when it's null.
+- **The notification must not contain the new password or a link with a token.** "If this wasn't you, reset it" means pointing at the request page.
+
+### Deliberate failures
+
+| # | Create this | What you'll see | Lesson |
+|---|---|---|---|
+| 1 | **Unlock with the bulk query** in the reset transaction (before adding `@DynamicUpdate`): lock carol, reset her password | Reset → 204, and carol is **still locked**; `psql` shows `failed_login_attempts = 5` | Hibernate writes the whole row (verified in the brief) |
+| 2 | **Then add `clearAutomatically = true`** to that query and reset again | 204, unlocked, and the **old password still works** | Clearing detaches the entity; its changes are never flushed |
+| 3 | **Change without revoking the reset link**: request a reset (copy the link from the log), change the password with `PUT /users/me/password`, then confirm with the old link | 204: the account is taken back by the old link | Outstanding reset links must die when the password changes |
+| 4 | **Validate the new password in the service, after consuming**: confirm with a 5-character password, then again with a good one and the same link | The second attempt → 400 `INVALID_TOKEN` | Boundary validation keeps the link alive |
+| 5 | **Re-authenticate with `passwordEncoder.matches`**: 6 wrong current passwords | 6 × 400, and `failed_login_attempts` still 0 | The manager is what makes it count |
+| 6 | **Mutation checks** once tests exist | Each planted bug turns a test red | See *Tests* |
+
+**The race** (📊): request a reset for carol, copy the token from the log, then:
+
+```bash
+seq 20 | xargs -P 20 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"token":"<TOKEN>","newPassword":"a-new-password-{}"}' localhost:8080/api/v1/auth/password-reset/confirm | sort | uniq -c
+```
+
+Exactly one 204, nineteen 400s, zero 500s.
+
+### Build order
+
+1. ~~**Settle D1–D5.**~~ Done 2026-09-29: all recommendations accepted (decisions 23–27).
+2. **`@ValidPassword`**, used by `RegisterRequest`. Run the app: registration behaves as before.
+3. **`AccountEmails`**; `RegistrationWorkflow` uses it. Register once: the verification link still appears in the log.
+4. **Error codes and the three request records** (masked `toString()`).
+5. **Reset request**: `PasswordService.requestReset`, `PasswordWorkflow.requestReset`, the endpoint. Run it: known, unknown, unverified and locked emails → identical 202s; a link in the log only for existing accounts.
+6. **Reset confirm**: `UserAccount.resetPassword`, the service, the workflow, the endpoint. ⚠️ Deliberate failures **1** and **2** first (bulk unlock), then add `@DynamicUpdate` and do the unlock inside `resetPassword`. Then **4**.
+7. **Change**: the service, the workflow, the endpoint. ⚠️ Deliberate failures **5**, then **3**.
+8. **The "password changed" email** (D4) in both flows.
+9. **Run it by hand:**
+   - Reset for carol → link in the log → confirm → 204 → the old password gets 401, the new one 200; `psql`: `password_changed_at` moved, one `PASSWORD_RESET`, the token consumed.
+   - The same link again → 400 `INVALID_TOKEN`. A second request revokes the first link.
+   - Lock carol (5 wrong passwords), reset → unlocked (D1). Reset bob (unverified) → he can log in (D2), with `EMAIL_VERIFIED` recorded.
+   - Change password: wrong current → 400 and the counter +1; same as current → 400 `PASSWORD_UNCHANGED`; right → 204, `PASSWORD_CHANGED`, and an outstanding reset link now fails.
+   - The race command.
+10. **Tests** (see below; deferred like §1.3–§1.5 if you choose).
+
+### Tests
+
+| Kind | Must prove |
+|---|---|
+| **Unit** | `@ValidPassword`: 11 characters fail, 12 pass, 73 bytes fail · request records never print secrets · `UserAccount.resetPassword`: clears the lock and counter, verifies only when unverified, returns whether it did · `PasswordService` (Mockito, fixed `Clock`): consume **before** hash; an invalid token → `INVALID_TOKEN` and no hash; `EMAIL_VERIFIED` only when it verified; change revokes the reset token · `PasswordWorkflow`: equal passwords → `PASSWORD_UNCHANGED` without calling the manager; `BadCredentialsException` / `LockedException` → `CURRENT_PASSWORD_INCORRECT`; other exceptions propagate; no email when the service throws; an email failure doesn't fail the request |
+| **JPA slice** | With `@DynamicUpdate`: a bulk counter change followed by an entity password change keeps both (the brief's experiment, as a test) |
+| **Web slice** | Confirm with a short password → 400 and the service never called · request with a malformed email → 400 · none of the bodies echoes a password |
+| **Integration** (capturing email sender) | Request for a known email → one email with a `#token=` link; unknown → 202 and **no** email; identical bodies · confirm → 204, old password 401, new 200, `PASSWORD_RESET` recorded · same token again → 400 · confirm unlocks a locked account and verifies an unverified one · change: wrong current → 400 and counter +1; unchanged → 400; right → 204 and the old reset link → 400 · both flows send the "password changed" email (D4) |
+| 📊 **Race** | 20 concurrent confirms with one token → exactly one 204, zero 500s |
+
+**Mutation checks:** hash before consume (a mocked encoder is called for a bad token) · drop `@DynamicUpdate` (the JPA test) · don't revoke the reset token on change · re-authenticate with `matches` (the counter test) · send inside the transaction (no email on a rolled-back confirm) · verify even when already verified (the timestamp moves).
+
+🎯 **Interview questions:**
+- "Design a password-reset flow." (The six token properties, 202 always, fragment links, one live link, short TTL, consume-then-hash, same-transaction events, notify the owner, no auto-login.)
+- "Why is your reset link valid for 30 minutes but your verification link for 24 hours?"
+- "What happens to an outstanding reset link when the user changes their password?"
+- "Why does your change-password endpoint go through the `AuthenticationManager`?"
+- "Your reset unlocked the account in the database, and then the lock came back. How?" (The whole-row `UPDATE`.)
+- "After a password change, what happens to the user's other devices?" (Nothing yet; Phase 2.)
+- "Does your reset request reveal which emails exist? What does it still leak?" (Timing.)
 
 ---
 

@@ -1,6 +1,7 @@
 package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.common.validator.MaxUtf8Bytes;
+import com.abhinav.taskflow.common.validator.ValidPassword;
 import jakarta.validation.constraints.*;
 
 public record RegisterRequest(
@@ -14,7 +15,7 @@ public record RegisterRequest(
         @NotBlank @Size(max = 100)
         String displayName,
 
-        @NotBlank @Size(min = 12, message = "must be at least 12 characters") @MaxUtf8Bytes(72)
+        @ValidPassword
         String password
 ) {
     @Override

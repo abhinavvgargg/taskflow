@@ -1,6 +1,6 @@
 # Phase 1 — Revision & Learning Log
 
-> Updated after every sub-phase. **Last updated 2026-09-29, covering §1.1–§1.5** (filter chain · users, passwords, principal, auditor · registration · email verification · login, lockout, login history).
+> Updated after every sub-phase. **Last updated 2026-10-01, covering §1.1–§1.6** (filter chain · users, passwords, principal, auditor · registration · email verification · login, lockout, login history · password reset and change).
 > Companions: `PHASE_1_REQUIREMENTS.md` (what to build) · `SECURITY_TESTING_GUIDE.md` (how the rules are tested) · `../phase-0/PHASE_0_LEARNING_LOG.md` (the foundations this builds on).
 
 ---
@@ -48,6 +48,13 @@
 | 37 | `SecurityEvent` → user | **Plain `Long userAccountId`** (switched from `@ManyToOne` during review) | A log never navigates to the user; the lockout path only has an id. |
 | 38 | Home of `LoginFailedException` | **`common/error`** (the user's choice; the brief said `user`) | It's code-agnostic, like `ResourceConflictException`: a better home than the brief's. |
 | 39 | §1.5 tests, mutation checks, timing measurement, deliberate failures 2 and 4–8 | **Deferred** (2026-09-29, user's call, to keep moving) | Debt, with the planned list in §8. |
+| 40 | Reset clears the lockout (§1.6 D1, 2026-09-29) | **Yes**: counter 0, `locked_until` null, in the reset's entity write | A reset proves mailbox control; otherwise the correct new password gets 401 for up to 15 minutes. |
+| 41 | Reset verifies an unverified email (§1.6 D2) | **Yes**; revokes the active verification link and records `EMAIL_VERIFIED` | The link click is the proof verification asks for. |
+| 42 | Reset token lifetime (§1.6 D3) | **30 minutes** | A reset link is a takeover credential; 30 minutes covers slow mail. Verification keeps 24h. |
+| 43 | Notify the owner after reset or change (§1.6 D4) | **Yes**, to the stored address, after commit; failures logged, not propagated | The owner learns of a takeover while they can still act. |
+| 44 | Whole-row writes on `user_accounts` (§1.6 D5) | **`@DynamicUpdate` on `UserAccount`**; account changes through entity methods | Verified: the default whole-row `UPDATE` undid a bulk unlock; `clearAutomatically` lost the password change; any load-then-save can erase a concurrent lock. |
+| 45 | Shape of the password flows | **`PasswordWorkflow` (not transactional) + `PasswordService` (transactional)**, `AccountEmails` for every account email, `@ValidPassword` for the rule, `AccountContact` as the "who to notify" carrier | Send after commit, re-authenticate outside a transaction, one place for links and for the password rule. |
+| 46 | §1.6 automated tests | **Not written** (no decision yet: write, or defer like decisions 19, 28, 39) | Debt, with the planned list in §8. |
 
 ---
 
@@ -56,6 +63,7 @@
 | § | Built | Key artifacts |
 |---|---|---|
 | **1.1** | Security starter, one filter chain, deny-by-default URL rules, stateless Basic, CSRF and logout off, health details restricted, security tests | `TaskflowSecurityConfig`, `management.endpoint.health.roles`, `TaskflowSecurityConfigTest` (19-row slice), `TaskflowSecurityIntegrationTest` |
+| **1.6** | `POST /auth/password-reset/request` (always 202), `POST /auth/password-reset/confirm` (204; unlocks, verifies, records), `PUT /users/me/password` (re-authenticates through the manager, counts toward lockout, revokes the reset link), "password changed" notification, `@DynamicUpdate` | `@ValidPassword` (composed), `PasswordResetRequest`, `PasswordResetConfirmRequest`, `ChangePasswordRequest`, `PasswordService`, `PasswordWorkflow`, `AccountEmails` (verification moved here from `RegistrationWorkflow`), `AccountContact`, `ResetToSend`, `UserAccount.resetPassword`, two error codes; no migration |
 | **1.5** | Login (`POST /auth/login`: 200 / 401 / 403), lockout on every password path (5 → 15 min, atomic counter, conditional lock), `security_events` (append-only, `inet`), recording `LOGIN_SUCCEEDED` / `LOGIN_FAILED` / `ACCOUNT_LOCKED` / `EMAIL_VERIFIED`, `GET /users/me/login-history` | `V4__create_security_events.sql`, `IdentifiedEntity`, `UserAuthenticationChecks`, the provider and manager beans in `TaskflowSecurityConfig`, `LockoutProperties`, `LoginRequest`, `LoginService`, `LoginFailedException`, `AuthenticationEventsListener`, `LoginAttemptService`, four `UserAccountRepository` queries, `user/event` (`SecurityEvent`, `SecurityEventType`, `LoginFailureReason`, `SecurityEventRepository`, `SecurityEventRecorder`), `ClientInfo`, `UserController`, `LoginHistoryService`, `LoginHistoryResponse` |
 | **1.4** | Email verification: token machinery (generate, SHA-256 at rest, expire, single-use, purpose, revoke on reissue), email sending (dev logs it; prod has none yet), registration sends a link after commit, `POST /verify-email`, `POST /verify-email/resend` (always 202) | `V3__create_user_tokens.sql`, `UserToken`, `TokenPurpose`, `UserTokenRepository` (conditional `UPDATE`s), `TokenCodec`, `UserTokenService`, `TokenProperties`, `IssuedToken`, `RegistrationWorkflow`, `RegistrationResult`, `VerificationToSend`, `VerifyTokenRequest`, `ResendVerificationRequest`, `EmailSender` / `EmailMessage` / `LoggingEmailSender`, `FrontendProperties`, `ResourceInvalidException`; test side: `CapturingEmailSender`, `src/test/resources/application-test.yml` |
 | **1.3** | `POST /api/v1/auth/register`: validation (incl. a byte-length constraint), normalisation, duplicate checks, bcrypt, the race translated to the same 409s, 201 with an account summary | `AuthController`, `RegisterRequest` (masked `toString`), `UserAccountResponse`, `UserErrorCode`, `UserRegistrationService`, `MaxUtf8Bytes` + `MaxUtf8BytesValidator`, `ValidationMessages.properties`, `CommonErrorUtility`, `Normalize.normalizeUsername`, repository `existsBy…` |
@@ -86,7 +94,10 @@
 - *(§1.5, reported by the user 2026-09-29)* Lockout works: 5 wrong passwords lock the account; step 6 and 7 manual runs "everything works" (the detailed results weren't sent). Bob (unverified) with a wrong password under Spring's **default** checks → **403** (deliberate failure 1), and **401** once the custom checks were back. With a transactional `LoginService` and the counter `REQUIRED`, the counter **stayed 0** (deliberate failure 3).
 - *(§1.5, verified by me)* V4 in a rolled-back transaction (every constraint, the trigger, the index plan, the cascade); both web slices start and pass with the provider bean and a mocked user store (scratch copy, 2026-09-29); the default-vs-custom check behaviour and the entity mapping (details in §4).
 
-**Commits:** `9211684` (§1.1 code) · `56340ae` (docs) · §1.5: `aa7efca` ("1.5 complete", code + docs), `a2cd682` (history-controller fix).
+- *(§1.6, reported by the user 2026-10-01)* "Ran it, everything works" for the manual-run list (reset, reuse, unlock, verify-by-reset, change-password cases, the old link after a change, the 20-way race). The detailed results weren't sent.
+- *(§1.6, verified by me)* `@ValidPassword` reports exactly the old messages (validator run on a scratch copy); the whole-row-write experiments in §4.
+
+**Commits:** `9211684` (§1.1 code) · `56340ae` (docs) · §1.5: `aa7efca` ("1.5 complete", code + docs), `a2cd682` (history-controller fix) · §1.6: **not committed yet** at this update.
 
 ---
 
@@ -239,6 +250,22 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 **V4 is now applied and frozen**, like V1–V3.
 
+### §1.6: password reset and change
+
+**Verified before the brief** (scratch copy, Hibernate 6.6.53): in one transaction, a bulk unlock followed by an entity password change → the entity's whole-row `UPDATE` put the lock back; with `clearAutomatically = true` the password change was lost instead; with `@DynamicUpdate` both survived. Decision 44.
+
+**Found in review:**
+
+| Bug | What would have happened |
+|---|---|
+| **The current-password check sent `taskflowPrincipal.getPassword()`**, the stored bcrypt hash | bcrypt compared the hash, as a typed password, with itself: **every** change → 400, and each counted as a wrong password, so **five attempts locked the user out** (Basic included). Fixed: `currentPassword()`. The worst bug of the section, and the same family as §1.5's `findIdByEmail`: compiles, looks plausible, fails silently. |
+| **`resetPassword` used `Instant.now()`** for `emailVerifiedAt` | Two time sources in one entity write; a fixed test `Clock` wouldn't control it. Fixed: the passed instant. |
+| **The confirm request's field was `password`** | The change request used `newPassword`: two names for one concept in the API. Renamed before any client existed. |
+| **`confirmReset` returned a `ResetToSend` with a `null` token** | The next caller of `.issuedToken().value()` gets an NPE. Replaced by `AccountContact`. |
+| **`applyChange` did nothing when the account was missing** | A 204 and a "password changed" email for a change that never happened. Fixed: `orElseThrow`. |
+| **The notification address came from the principal** (`getUsername()`) | Correct value, misleading name (the §1.2 auditor slip); now from the loaded account, like reset. |
+| **`.with("field", "newPassword").with("field", "currentPassword")`** | The properties are a map: the second call overwrites the first, so `PASSWORD_UNCHANGED` names the wrong field. And `CURRENT_PASSWORD_INCORRECT` had no field. **Open at this update.** |
+
 ### Found along the way
 
 **`LogoutFilter` is on by default** and appeared in the filter list without being asked for. It handles `/logout` **before** `AuthorizationFilter`, so `denyAll()` doesn't govern it. Disabled; `/logout` now falls to `denyAll` (verified: 401 / 403). Phase 2 builds the real logout.
@@ -311,6 +338,14 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 | *(§1.5)* **Factories that can't build an invalid event** | Constraint violations (500s) at the moment an account locks |
 | *(§1.5)* **History: owner from the principal, sort fixed and index-backed, stabilised by `PageableFactory`** | IDOR on other users' IPs; skipped or repeated rows across pages; in-memory sorts |
 | *(§1.5)* **No minimum length on the login password, but the 72-byte cap** | Locking out old passwords when the policy tightens; `matches()` comparing only 72 bytes |
+| *(§1.6)* **Reset request always 202, link sent to the stored address** | An enumeration oracle; links sent to an address the caller typed |
+| *(§1.6)* **30-minute, single-use, purpose-bound reset link in the fragment; one live at a time** | Long-lived takeover credentials in inboxes and logs; scanners consuming links |
+| *(§1.6)* **Validate the new password at the boundary, consume the token, then hash** | Links burnt by a typo; a bcrypt per garbage token |
+| *(§1.6)* **`@DynamicUpdate` + account changes through entity methods** | A whole-row write undoing a bulk change, or erasing a concurrent lock |
+| *(§1.6)* **Change revokes the outstanding reset link** | An earlier link taking the account back after a deliberate change |
+| *(§1.6)* **Re-authenticate through the `AuthenticationManager` with the principal's email** | An uncounted oracle for the current password (with a stolen Phase 2 token: unlimited guesses) |
+| *(§1.6)* **Notify the owner after reset or change, after commit** | Takeovers discovered days later |
+| *(§1.6)* **One password rule (`@ValidPassword`), one place for account emails (`AccountEmails`)** | Reset or change drifting from registration's rule; link building and "never log the token" drifting between workflows |
 
 ---
 
@@ -434,7 +469,20 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 
 *Boot and forwarded headers:* on a detected cloud platform (Kubernetes etc.), forwarded-header handling is on by default (verified in `CloudPlatform`). `getRemoteAddr()` then reflects `X-Forwarded-For` from trusted proxies: decide it in Phase 11.
 
+**§1.6 — Password reset and change.**
+
+*Hibernate writes the whole row* (verified): without `@DynamicUpdate`, an entity's `UPDATE` lists every mapped column from the in-memory copy, so anything another statement changed since the load is overwritten with the stale value. `@DynamicUpdate` lists only the changed columns (`password_changed_at, password_hash, updated_at` in the experiment).
+
+*`clearAutomatically` detaches* (verified): it's for "bulk, then read", not "bulk, then write through an entity". Changes to an entity loaded before the clear are silently never written.
+
+*Constraint composition* (verified): `@ValidPassword` carries `@NotBlank`, `@Size(min = 12)` and `@MaxUtf8Bytes(72)` with `@Constraint(validatedBy = {})`. Each part still reports its own message: empty → "must not be blank" + "must be at least 12 characters"; 19 emoji → the byte message. The part must allow `ElementType.ANNOTATION_TYPE`, which `@MaxUtf8Bytes` didn't until §1.6.
+
+*Re-authentication* asks for the password again before a sensitive change, because sessions (and Phase 2 tokens) get stolen. Doing it through the manager makes the lockout counter cover it.
+
+*Token lifetime follows damage:* verification's worst case is a wrongly verified address (24h is fine); reset's is account takeover (30 minutes).
+
 📊 **Measured:**
+- *(§1.6)* **No §1.6 tests** (decision 46). The manual run was reported working (2026-10-01); the race result wasn't sent as numbers.
 - *(§1.5)* **No §1.5 tests** (decision 39). V4 verified in a rolled-back transaction: 3 valid rows; 8 invalid inserts rejected by the expected constraint; `UPDATE` rejected by the trigger; an `UPDATE` matching nothing → `UPDATE 0`; the history plan is `Index Scan Backward` with no Sort node; the cascade removed 3 → 0 rows. The web slices pass with the provider bean (scratch copy, 2026-09-29). **Suite count after §1.5 not reported.** Timing (known vs unknown email) **not measured**.
 - *(§1.4)* Existing suite still 76/76 after the resend refactor. **No §1.4 tests** (decision 28). Manual runs passing. Resend race: 10 × 202, and the database shows 4 tokens issued and **6 requests handled through the collision path** (verified). Verify race: one 204 (reported).
 - *(§1.3)* The existing suite stays green after the §1.3 changes (76/76, including `GlobalExceptionHandler`'s refactor to `CommonErrorUtility`). **No §1.3 tests yet** (decision 19).
@@ -504,6 +552,13 @@ On 6.3.1, **a different password logs in**: `18 emoji + "first-ending"` was hash
 52. **When do you use `REQUIRES_NEW`, and what does it cost?** When a record must survive its caller's rollback (a failed-attempt count). It suspends the caller's transaction and takes a second connection, which can exhaust a small pool.
 53. **How do you get the client's IP? Why not `X-Forwarded-For`?** The socket address; a header is client-controlled. Behind a proxy, trust forwarded headers only from that proxy (Phase 11), and know Boot turns this on by itself on detected cloud platforms.
 54. **How do you make an audit table append-only?** No setters and `@Immutable` in the application, plus a trigger that rejects `UPDATE` in the database, because `@Immutable` ignores changes silently.
+55. **Design a password-reset flow.** Request always 202, link to the stored address; the six token properties; the token in the fragment; 30 minutes; one live link; validate, consume, then hash; the change, the unlock, the verification and the events in one transaction; notify the owner after commit; no automatic login.
+56. **Why 30 minutes for reset but 24 hours for verification?** Lifetime follows damage: a reset link is account takeover.
+57. **What happens to an outstanding reset link when the user changes their password?** It's revoked in the same transaction; otherwise whoever requested it can take the account back.
+58. **Why does change-password go through the `AuthenticationManager`?** So a wrong current password counts toward lockout; a plain `matches()` would be an uncounted oracle for anyone holding a session or token.
+59. **Your reset unlocked the account, and then the lock came back. How?** A bulk `UPDATE` cleared it, then the entity's whole-row `UPDATE` wrote the stale values back. `@DynamicUpdate` writes only changed columns; `clearAutomatically` would have lost the password instead.
+60. **Your change-password endpoint rejected every correct password and locked users out. Why?** It checked the stored hash as if it were the typed password: never a match, and each failure counted.
+61. **Does your reset request reveal which emails exist?** Not by status or body; by timing, yes (a known email writes a token and sends mail). Phase 9's async sending removes most of it.
 
 ### Not answerable yet
 
@@ -596,6 +651,15 @@ select id, user_account_id, event_type, failure_reason, host(ip_address) as ip, 
 from security_events order by id desc limit 15;
 ```
 
+Password reset and change (§1.6):
+
+```bash
+curl -s -i -H 'Content-Type: application/json' -d '{"email":"carol@example.com"}' localhost:8080/api/v1/auth/password-reset/request              # 202 always
+curl -s -i -H 'Content-Type: application/json' -d '{"token":"<TOKEN>","newPassword":"a-new-password-1"}' localhost:8080/api/v1/auth/password-reset/confirm   # 204, then 400
+curl -s -i -u carol@example.com:<pw> -X PUT -H 'Content-Type: application/json' -d '{"currentPassword":"<pw>","newPassword":"another-password-2"}' localhost:8080/api/v1/users/me/password
+seq 20 | xargs -P 20 -I{} curl -s -o /dev/null -w '%{http_code}\n' -H 'Content-Type: application/json' -d '{"token":"<TOKEN>","newPassword":"a-new-password-{}"}' localhost:8080/api/v1/auth/password-reset/confirm | sort | uniq -c
+```
+
 Logging switches for one-off investigation (dev only; switch them off again):
 - `org.springframework.security.web.DefaultSecurityFilterChain: DEBUG` prints the filter list at startup.
 - `org.springframework.security: TRACE` follows one request filter by filter.
@@ -618,6 +682,9 @@ Logging switches for one-off investigation (dev only; switch them off again):
 | *(§1.5)* Spring's default checks, unverified bob with a **wrong** password | **403 `EMAIL_NOT_VERIFIED`**: the account's state leaks without the password. With the custom checks: 401. (A first attempt showed 401 because the app hadn't been restarted.) |
 | *(§1.5)* The rollback trap: `@Transactional` login, counter `REQUIRED` | **Counter stayed 0** after the wrong passwords, with no error anywhere |
 | *(§1.5, happened in the code, caught in review)* A derived `findIdByEmail` plus a listener that swallowed `DataAccessException` | Verified on a scratch copy: `JpaSystemException` for every existing account. With the `catch`, lockout would have been silently off. |
+| *(§1.6, run by me on a scratch copy for the brief)* Bulk unlock + entity password change in one transaction; then with `clearAutomatically`; then with `@DynamicUpdate` | Lock came back / password change lost / both survived (decision 44) |
+| *(§1.6, happened in the code, caught in review)* The stored hash sent as the current password | Would have been: every change 400, and the user locked out after five tries |
+| *(§1.6, not run)* Deliberate failures 1, 2 (bulk unlock, `clearAutomatically`), 4 (validate after consume), 5 (`matches` instead of the manager); 3 (old link after a change) was in the reported manual run | Listed in `PHASE_1_REQUIREMENTS.md` §1.6 |
 | *(§1.5, deferred 2026-09-29)* The documented manager bean (2) · lost updates with a Java counter (4) · "locked" after a correct password (5) · history from the events (6) · trusting `X-Forwarded-For` (7) · `UPDATE` on `security_events` (8) | Listed in `PHASE_1_REQUIREMENTS.md` §1.5, deliberate failures |
 | *(§1.4, optional, not run)* The phantom email on purpose · self-invocation · check-then-act consume (20-way race) · swallowing inside the transaction (10-way resend → `UnexpectedRollbackException`) · prod start without a sender | Listed in `PHASE_1_REQUIREMENTS.md` §1.4, deliberate failures |
 
@@ -650,6 +717,8 @@ Logging switches for one-off investigation (dev only; switch them off again):
 
 ## 8. Carried debt
 
+- **§1.6 open review items (2026-10-01):** `PASSWORD_UNCHANGED` sets `field` twice (the map keeps `currentPassword`; should be `newPassword`); `CURRENT_PASSWORD_INCORRECT` has no `field`. Nits: `catch (Exception e)` + `instanceof` in `changePassword`; the `"uk_user_tokens_active"` literal duplicated in `PasswordWorkflow`; no `ValidPassword.message` key; the "password changed" email has no `/forgot-password` link.
+- **§1.6 tests (decision 46)**: none. Planned (table in `PHASE_1_REQUIREMENTS.md` §1.6): `@ValidPassword` boundaries; masked request records; `resetPassword`; `PasswordService` order (consume before hash) and revokes; `PasswordWorkflow` (equality before the manager, exception mapping, no email on failure); a JPA test proving `@DynamicUpdate` keeps a bulk change; integration for request (email only for known accounts), confirm, reuse, unlock, verify, change and the revoked link; the 20-way race.
 - **§1.5 tests (decision 39)**: none. Planned (full table in `PHASE_1_REQUIREMENTS.md` §1.5): an **adjustable `Clock`** in the shared test config; unit tests for the provider's checks, `LoginAttemptService`, `LoginService`'s translation and recording, `ClientInfo`; JPA tests for the four counter queries, the `inet` round trip, the `CHECK`s, the trigger, history paging; integration tests for the rollback trap, the Basic side door, unlock by clock, identical 401 bodies, 403 for unverified, reset on success, history ownership and "no rows from Basic"; the 20-way race.
 - **§1.5 mutation checks, timing measurement (known vs unknown email), and deliberate failures 2 and 4–8**: not run (decision 39).
 - **§1.5 suite count**: not reported after §1.5 (last confirmed 76/76 at §1.4; the two slices pass).

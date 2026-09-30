@@ -11,7 +11,9 @@ public enum UserErrorCode implements ErrorCode {
     USERNAME_TAKEN(HttpStatus.CONFLICT, "Username is already taken."),
     INVALID_TOKEN(HttpStatus.BAD_REQUEST, "Token is invalid"),
     AUTHENTICATION_FAILED(HttpStatus.UNAUTHORIZED, "Authentication failed"),
-    EMAIL_NOT_VERIFIED(HttpStatus.FORBIDDEN, "Email is not verified");
+    EMAIL_NOT_VERIFIED(HttpStatus.FORBIDDEN, "Email is not verified"),
+    PASSWORD_UNCHANGED(HttpStatus.BAD_REQUEST, "Password was not changed"),
+    CURRENT_PASSWORD_INCORRECT(HttpStatus.BAD_REQUEST, "Current password is incorrect");
 
     private final HttpStatus status;
     private final String title;

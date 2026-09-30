@@ -7,7 +7,7 @@ import java.lang.annotation.*;
 
 @Documented
 @Retention(RetentionPolicy.RUNTIME)
-@Target(ElementType.FIELD)
+@Target({ElementType.FIELD, ElementType.ANNOTATION_TYPE})
 @Constraint(validatedBy = {MaxUtf8BytesValidator.class})
 public @interface MaxUtf8Bytes {
 
