@@ -3,17 +3,17 @@
 > Companion to `../PROJECT_CONTEXT.md` · decisions and traps from `../phase-0/PHASE_0_LEARNING_LOG.md` · test patterns from `../phase-0/TESTING_GUIDE.md`. Requirements only, no code. Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** Anything unfinished becomes a side task in Phase 2. The phase doesn't get extended.
 
-## ▶ Where we are (resume here) — updated 2026-10-01
+## ▶ Where we are (resume here) — Phase 1 closed 2026-10-01
 
 | | |
 |---|---|
-| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) · §1.6 password reset & change (**built and reported working 2026-10-01, not yet committed**; tests not written) |
-| **Next** | **Finish §1.6:** set the two `field` properties (learning log §8), decide §1.6 tests (write or defer), commit. **Then decide §1.7 (profile):** Phase 1 is past its time-box, and §1.7 is first on the trim list (`PROJECT_CONTEXT.md` §3.7: ship what works), so the recommendation is to **move it to a later sub-phase** and record the move. **Then close Phase 1:** walk the Definition of done below, update the README (auth endpoints, dev verification link, Basic note), and write the 15-minute Phase 1 notes. |
-| **Decisions to raise next** | §1.6 tests: write now or defer (decision 46) · §1.7: trim (recommended) or build · whether any deferred tests (§1.3–§1.6) must land before Phase 2 starts |
+| **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) · §1.6 password reset & change (`63bb1b4`, `4e115a2`, **tests deferred**) · §1.7 **moved to Phase 2** (decision 28) |
+| **Next** | **Phase 2 — JWT & sessions.** Brief it in the `PROJECT_CONTEXT.md` §3.1 layout (a new `docs/phase-2/PHASE_2_REQUIREMENTS.md`), raising its open decisions first. Side task: §1.7 profile (decision 28). Before starting: your 15-minute Phase 1 notes (bottom of this doc). |
+| **Settled at close (2026-10-01)** | No deferred tests before Phase 2 · §1.7 moved to Phase 2 · email change to the backlog. The learning log was consolidated by theme; sub-section detail stays in this doc. |
 | **Carried forward** | Nothing blocks Phase 2. `password_changed_at` is stamped by reset and change, ready for Phase 2's "reject tokens issued before it". |
 | **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: **§1.3–§1.6 tests** (planned lists there), §1.5 mutation checks and timing measurement, deliberate failures not run (§1.3 race, §1.4 list, §1.5 #2 and #4–8, §1.6 #1, #2, #4, #5), resend timing leak, bcrypt timing not measured, small nits |
 | **Environment state** | Dev DB has migrations **V1–V4** applied (**all frozen**: never edit an applied migration). Dev users include `alice` (ADMIN, verified), `bob` (unverified), `carol` (verified), plus accounts from manual runs; `security_events` holds rows from the §1.5 manual runs, and carol may be locked or have a non-zero counter (reset: `update user_accounts set failed_login_attempts = 0, locked_until = null where username = 'carol';`). Suite: last confirmed 76/76 at §1.4; not re-run after §1.5 (the two web slices pass). |
-| **Numbering note** | This doc's Decisions table (1–27) and the learning log's decisions (1–46) are numbered **independently**; the learning log is the complete record. |
+| **Numbering note** | This doc's Decisions table (1–28) and the learning log's decisions (1–47) are numbered **independently**; the learning log is the complete record. |
 
 ---
 
@@ -67,6 +67,7 @@
 | 25 | **Reset token lifetime** (§1.6 D3), decided 2026-09-29 | **30 minutes** (the configured `password-reset-ttl`) | Covers slow mail; a reset link is a takeover credential, so exposure stays short. Verification keeps 24h: its worst case is far milder. |
 | 26 | **Notify the owner after a reset or change** (§1.6 D4), decided 2026-09-29 | **Yes: "your password was changed" to the stored address, after commit; a failure is logged, not propagated** | The owner learns of a takeover while they can still act (OWASP forgot-password guidance). |
 | 27 | **Whole-row writes on `user_accounts`** (§1.6 D5), decided 2026-09-29 | **`@DynamicUpdate` on `UserAccount`; every §1.6 account change through entity methods** | Verified: without it, the entity write undoes a bulk unlock; `clearAutomatically` loses the password change; and any load-then-save flow can erase a concurrent lock. |
+| 28 | **§1.7 (profile)**, decided 2026-10-01 | **Moved to Phase 2 as a side task** | Phase 1 is past its time-box and §1.7 was first on the trim list; the phase rule sends unfinished work to Phase 2. Nothing in Phase 2 depends on it. |
 
 ---
 
@@ -1317,7 +1318,7 @@ update user_accounts set failed_login_attempts = 0, locked_until = null where us
 
 ---
 
-## 1.6 — Password reset & password change ✅ built (uncommitted at 2026-10-01; **two `field` properties still open, tests not written**, see the learning log)
+## 1.6 — Password reset & password change ✅ built (`63bb1b4`, `4e115a2`; **tests deferred**, see the learning log)
 
 > **Time-box, honestly:** Phase 1 was budgeted at 7h (hard stop 10.5h), and §1.1–§1.5 have almost certainly used that. `PROJECT_CONTEXT.md` §3.7 says: ship what works. So each decision below also names its **cheaper option**, and the phase's trim order still applies: §1.7 (profile) goes first.
 > **No schema change in §1.6.** `user_tokens` already accepts `PASSWORD_RESET`, `security_events` already accepts `PASSWORD_RESET` / `PASSWORD_CHANGED`, and `user_accounts` has `password_changed_at`. D5 is a mapping change, not a migration.
@@ -1400,7 +1401,7 @@ The lockout counter is written by bulk SQL (§1.5), and everything else through 
 | Removing the reset request's timing leak | Phase 9 (async sending) |
 | Password history ("not one of your last 5") | Not planned: NIST 800-63B doesn't ask for it |
 | Checking new passwords against breach lists | Interview knowledge only (HIBP k-anonymity) |
-| Email change | Not in Phase 1 |
+| Email change | Deferred backlog, `PROJECT_CONTEXT.md` §6 (design notes there) |
 
 ### How we're building it, and why
 
@@ -1657,12 +1658,12 @@ Exactly one 204, nineteen 400s, zero 500s.
 
 ---
 
-## 1.7 — Profile (~30 min, **first thing to trim**)
+## 1.7 — Profile ⏭️ moved to Phase 2 as a side task (2026-10-01, decision 28; the notes below are kept for then)
 
 - [ ] `GET /api/v1/users/me` → id, email, username, displayName, timezone, role, emailVerified, createdAt. It **never** includes the password hash, the lock state or failed attempts. The response DTO decides what's public, which is Phase 0's over-exposure argument with a real hash behind it now.
 - [ ] `PATCH /api/v1/users/me` with `{displayName?, timezone?}`, where `null` means "leave unchanged". 💡 A record **can't tell "field missing" from "field sent as null"**. Write that limit down: a real PATCH needs JSON Merge Patch or `JsonNullable`. Not now.
 - [ ] `timezone` must be a valid IANA **region** ID. ⚠️ **Trap:** `ZoneId.of` also accepts `+05:30`, `UTC+1` and `Z`. Fixed offsets are *not* timezones, because they ignore daylight saving. Validate against `ZoneId.getAvailableZoneIds()`.
-- [ ] Email change is **out of scope**: it needs re-verification of the new address, and it's a whole feature.
+- [ ] Email change is **out of scope**: it needs re-verification of the new address, and it's a whole feature. *(2026-10-01: added to the deferred backlog, `PROJECT_CONTEXT.md` §6, with the design.)*
 
 ---
 
@@ -1697,24 +1698,24 @@ Patterns come from `TESTING_GUIDE.md`. What's **new** this phase:
 
 ---
 
-## Definition of done
+## Definition of done ✅ Phase 1 closed 2026-10-01
 
-Check these literally, by running them.
+Check these literally, by running them. *Evidence per item: **tests** = the suite (76/76, run 2026-10-01); **reported** = your manual runs; **audited** = I read the code.*
 
-- [ ] No generated password in the startup log. The `--debug` report has been read, and the backing-off condition written down.
-- [ ] Register → the verification link is in the dev log → verify → login 200. The `user_accounts` row shows a `{bcrypt}` hash, a lowercase email, and `created_by` = `system`.
-- [ ] Login before verification behaves exactly as decided in §1.5.
-- [ ] N wrong passwords → locked; the correct password is still rejected; after the lock duration it works. **Also tested through Basic.**
-- [ ] Unknown email and wrong password give byte-identical response bodies (except `timestamp` and `correlationId`).
-- [ ] Reset for an unknown email and for a known email → both 202 with identical bodies.
-- [ ] A reset token works once. The second use and the concurrent race both give exactly one success.
-- [ ] No password, token or email appears anywhere in the logs at INFO (the `dev` email sender is the one documented exception).
-- [ ] Every row of the access table behaves as specified. The last rule is `denyAll()`.
-- [ ] No `JSESSIONID` cookie in any response. 401s carry `X-Correlation-Id`.
-- [ ] After a password change, `password_changed_at` has moved, and a `PASSWORD_CHANGED` event exists.
-- [ ] Suite green; the Phase 0 tests are fixed, not disabled.
-- [ ] README updated: the auth endpoints, how to register and verify in dev (where the link appears), and the Basic auth note.
-- [ ] Small commits, roughly one per section.
+- [x] No generated password in the startup log. The `--debug` report has been read, and the backing-off condition written down. (verified in §1.2; the back-off conditions are in the learning log)
+- [x] Register → the verification link is in the dev log → verify → login 200. The `user_accounts` row shows a `{bcrypt}` hash, a lowercase email, and `created_by` = `system`. (reported, §1.3–§1.4)
+- [x] Login before verification behaves exactly as decided in §1.5. (reported: 401 with a wrong password, 403 with the right one)
+- [x] N wrong passwords → locked; the correct password is still rejected; after the lock duration it works. **Also tested through Basic.** (reported; by manual run, not by test)
+- [x] Unknown email and wrong password give byte-identical response bodies (except `timestamp` and `correlationId`). (reported; by construction: one exception, one fixed detail)
+- [x] Reset for an unknown email and for a known email → both 202 with identical bodies. (reported)
+- [x] A reset token works once. The second use and the concurrent race both give exactly one success. (reported; the race numbers weren't sent)
+- [x] No password, token or email appears anywhere in the logs at INFO (the `dev` email sender is the one documented exception). (audited 2026-10-01: account logs carry ids only. Note: dev's SQL bind logging at `TRACE` prints emails and hashes.)
+- [x] Every row of the access table behaves as specified. The last rule is `denyAll()`. (tests)
+- [x] No `JSESSIONID` cookie in any response. 401s carry `X-Correlation-Id`. (tests)
+- [x] After a password change, `password_changed_at` has moved, and a `PASSWORD_CHANGED` event exists. (reported)
+- [x] Suite green; the Phase 0 tests are fixed, not disabled. (tests: 76/76, 2 containers. **Nothing after §1.2 has tests**: owed, not before Phase 2.)
+- [x] README updated: the auth endpoints, how to register and verify in dev (where the link appears), and the Basic auth note. (2026-10-01)
+- [x] Small commits, roughly one per section. (roughly; §1.6's commit message says "1.5")
 
 ---
 

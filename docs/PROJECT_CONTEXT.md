@@ -37,6 +37,7 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 - ✅ Account lockout after repeated failed logins, auto-unlock after cooldown
 - ✅ User profile (timezone, basic preferences), login history
 - 🔶 API keys for integrations — scoped, revocable, hashed at rest, last-used tracking
+- ⏸️ Email change — pending until the new address is verified, old address notified (added 2026-10-01; see section 6)
 
 **Organizations (tenants)**
 - ✅ Create organization; creator becomes Owner
@@ -134,7 +135,7 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
    - when I say "just check the code", read it only: don't run the app or tests.
 4. **Run it.** Give me the sequence: commands, the SQL to set up data, and a table of requests with expected results. I run it and report back.
 5. **Tests.** By default I write them, using the guides. If I ask, you write them **and explain them**: how to read them, and what each one proves. Either way, every test is **mutation-checked**: plant the bug, and the test must go red. A test that can't fail doesn't count.
-6. **Wrap up.** You update `PHASE_N_LEARNING_LOG.md` for the sub-phase and tick the requirements. I commit.
+6. **Wrap up.** You update `PHASE_N_LEARNING_LOG.md` (merging the sub-phase into its themes, see 3.5) and tick the requirements. I commit.
 7. **If I'm stuck:** hints first, the full solution only if I really need it.
 
 ### 3.2 Two standing asks, on every feature
@@ -165,7 +166,7 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 |---|---|---|
 | `docs/PROJECT_CONTEXT.md` | This file: goals, plan, working agreement, standards | When decisions change |
 | `docs/phase-N/PHASE_N_REQUIREMENTS.md` | A **"Where we are (resume here)"** block at the top (done / next / decisions to raise / debt / environment), then the dated Decisions table, phase-level concepts, one section per sub-phase in the §3.1 layout, ticked as done | Before and after each sub-phase; the status block at every wrap-up, so a new chat can resume from the files alone |
-| `docs/phase-N/PHASE_N_LEARNING_LOG.md` | Same structure as Phase 0's: decisions, what we covered, challenges, practices and what they prevent, learning per stage, interview questions (answerable now / not yet), commands, deliberate failures and mutation results, carried debt | **After every sub-phase**, by you. Only verified facts and measured numbers. |
+| `docs/phase-N/PHASE_N_LEARNING_LOG.md` | **Organised by theme, not by sub-section** (rule since 2026-10-01): what was built + evidence, decisions (one line each), lessons by theme (things actually hit marked *(Hit)*), practices and what they prevent, interview questions (answerable now / not yet), commands, deliberate failures and mutation results, carried debt. **Concise:** sub-section detail (briefs, per-step failures, test plans) lives only in the requirements doc. | **After every sub-phase**, by you: merge the new lessons into the existing themes rather than adding a sub-section block. Only verified facts and measured numbers; say what was verified vs reported. |
 | Guides (`phase-0/TESTING_GUIDE.md`, `phase-1/SECURITY_TESTING_GUIDE.md`, …) | Patterns to copy, with verified behaviour | When a new kind of test appears |
 
 **When a document is restructured, nothing is dropped**, above all the traps and deliberate failures.
@@ -240,6 +241,9 @@ Legend: ✅ in the 12-week scope · 🔶 Phase 10, committed but sequenced after
 - Attachments — multipart, real content-type validation, streaming (~3h)
 - CSV export — `StreamingResponseBody`
 
+**Know the design, build only if time allows** (reuses Phase 1's token machinery; the interview value is the design):
+- Email change (added 2026-10-01). *Problem:* changing the login email without enabling the account-takeover chain (steal a session → change the email → reset the password → the owner is locked out for good). *In this codebase:* re-authenticate through the `AuthenticationManager`; issue an `EMAIL_CHANGE` token that carries the new address (a migration: a `new_email` column on `user_tokens`, or an `email_change_requests` table); send the confirm link to the **new** address; on confirm, switch the email, revoke every outstanding reset and verification token, and record an event; notify the **old** address with a "this wasn't me" revert link. A new address that's already registered is a 409 (knowingly, like registration) or a silent no-op (no enumeration): decide then. Audit columns are safe: `created_by` holds the username, not the email (Phase 0 decision #9).
+
 **Pure repetition, zero learning loss** (build only to enrich the product): saved filters, dashboards/reports, issue links, custom fields, invitation emails, sprints/velocity/burndown, SLA policies with business-hours + pause + escalation, notification preferences and digest mode.
 
 **Belongs to the microservices track, not here:** Kafka split of notifications, Spring Authorization Server, Redis caching and distributed locks/rate limiting.
@@ -270,4 +274,4 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 **Resuming right now (2026-10-01):**
 
-> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_REQUIREMENTS.md` (start with "Where we are"), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. §1.1–§1.5 are done (tests for §1.3–§1.5 deferred as debt). §1.6 (password reset & change) is built and working; finish it per "Where we are" (two small fixes, a test decision, the commit). Then help me decide §1.7 (trim recommended) and close Phase 1 (Definition of done, README, notes).
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read, in full: `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`; from `docs/phase-1/PHASE_1_REQUIREMENTS.md`, read "Where we are", the Decisions table and "Explicitly NOT in Phase 1", and the rest as needed. Phase 1 is closed (2026-10-01): tests for §1.3–§1.6 are owed (none before Phase 2), §1.7 profile is a Phase 2 side task. Brief **Phase 2 (JWT & sessions)** in the section 3.1 layout, in a new `docs/phase-2/PHASE_2_REQUIREMENTS.md`, raising its open decisions first. Requirements, not code; SQL for new tables.
