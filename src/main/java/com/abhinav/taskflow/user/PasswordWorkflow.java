@@ -47,7 +47,7 @@ public class PasswordWorkflow {
 
     public void changePassword(TaskflowPrincipal taskflowPrincipal, ChangePasswordRequest changePasswordRequest, ClientInfo clientInfo) {
         if (changePasswordRequest.newPassword().equals(changePasswordRequest.currentPassword())) {
-            throw new ResourceInvalidException(UserErrorCode.PASSWORD_UNCHANGED, "Old and new passwords cannot be same.").with("field", "newPassword").with("field", "currentPassword");
+            throw new ResourceInvalidException(UserErrorCode.PASSWORD_UNCHANGED, "Old and new passwords cannot be same.").with("field", "newPassword");
         }
 
         UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.unauthenticated(taskflowPrincipal.getUsername(), changePasswordRequest.currentPassword());
@@ -58,7 +58,7 @@ public class PasswordWorkflow {
         }
         catch (Exception e) {
             if (e instanceof BadCredentialsException || e instanceof LockedException) {
-                throw new ResourceInvalidException(UserErrorCode.CURRENT_PASSWORD_INCORRECT, "Invalid current password.");
+                throw new ResourceInvalidException(UserErrorCode.CURRENT_PASSWORD_INCORRECT, "Invalid current password.").with("field", "currentPassword");
             }
             throw e;
         }
