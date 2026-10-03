@@ -8,7 +8,7 @@
 | | |
 |---|---|
 | **Done** | §1.1 security starter & filter chain (`9211684`, tests ✅) · §1.2 users, passwords, principal, auditor (`1fc0f54`, tests ✅) · §1.3 registration (`02bc36b`, **tests deferred**) · §1.4 email verification (`5085ed7` and earlier partial commits, **tests deferred**) · §1.5 login, lockout, login history (`aa7efca`, `a2cd682`, **tests deferred**) · §1.6 password reset & change (`63bb1b4`, `4e115a2`, **tests deferred**) · §1.7 **moved to Phase 2** (decision 28) |
-| **Next** | **Phase 2 — JWT & sessions.** Brief it in the `PROJECT_CONTEXT.md` §3.1 layout (a new `docs/phase-2/PHASE_2_REQUIREMENTS.md`), raising its open decisions first. Side task: §1.7 profile (decision 28). Before starting: your 15-minute Phase 1 notes (bottom of this doc). |
+| **Next** | **Phase 2 — JWT & sessions**, briefed 2026-10-01 in `../phase-2/PHASE_2_REQUIREMENTS.md` (decisions taken 2026-10-02; D9 defers this phase's test debt until Phase 2 closes). Side task: §1.7 profile (decision 28). Before starting: your 15-minute Phase 1 notes (bottom of this doc). |
 | **Settled at close (2026-10-01)** | No deferred tests before Phase 2 · §1.7 moved to Phase 2 · email change to the backlog. The learning log was consolidated by theme; sub-section detail stays in this doc. |
 | **Carried forward** | Nothing blocks Phase 2. `password_changed_at` is stamped by reset and change, ready for Phase 2's "reject tokens issued before it". |
 | **Open debt** | See `PHASE_1_LEARNING_LOG.md` §8: **§1.3–§1.6 tests** (planned lists there), §1.5 mutation checks and timing measurement, deliberate failures not run (§1.3 race, §1.4 list, §1.5 #2 and #4–8, §1.6 #1, #2, #4, #5), resend timing leak, bcrypt timing not measured, small nits |
