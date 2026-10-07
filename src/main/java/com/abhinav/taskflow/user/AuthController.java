@@ -6,7 +6,9 @@ import com.abhinav.taskflow.user.token.VerifyTokenRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -19,6 +21,7 @@ public class AuthController {
     private final RegistrationWorkflow registrationWorkflow;
     private final LoginService loginService;
     private final PasswordWorkflow passwordWorkflow;
+    private final RefreshCookie refreshCookie;
 
     @PostMapping("/register")
     public ResponseEntity<UserAccountResponse> registerUserAccount (@Valid @RequestBody RegisterRequest registerRequest) {
@@ -39,9 +42,13 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<UserAccountResponse> login (@Valid @RequestBody LoginRequest loginRequest, HttpServletRequest request) {
-        UserAccountResponse userAccountResponse = loginService.login(loginRequest, ClientInfo.from(request));
-        return ResponseEntity.ok(userAccountResponse);
+    public ResponseEntity<LoginResponse> login (@Valid @RequestBody LoginRequest loginRequest, HttpServletRequest request) {
+        LoginResult result = loginService.login(loginRequest, ClientInfo.from(request));
+        ResponseCookie cookie = refreshCookie.set(result.session().refreshToken(), result.session().refreshTokenMaxAge());
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE, cookie.toString())
+                .body(LoginResponse.from(result));
     }
 
     @PostMapping("/password-reset/request")

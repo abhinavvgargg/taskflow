@@ -3,15 +3,15 @@
 > Companion to `../PROJECT_CONTEXT.md` · what Phase 1 built and learned: `../phase-1/PHASE_1_LEARNING_LOG.md` · test patterns: `../phase-0/TESTING_GUIDE.md` and `../phase-1/SECURITY_TESTING_GUIDE.md`. Requirements only, no code (the migration SQL is provided, as agreed). Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** The Phase 1 test debt isn't in it (D9: raised again when Phase 2 closes). Anything unfinished becomes a side task in Phase 3.
 
-## ▶ Where we are (resume here) — decisions taken 2026-10-02, nothing built yet
+## ▶ Where we are (resume here) — §2.1 done 2026-10-07, §2.2 next
 
 | | |
 |---|---|
-| **Done** | This brief (2026-10-01). V5 and V6 drafted below and **verified in a rolled-back transaction** on the dev DB; **not applied**. |
-| **Next** | 1. Your 15-minute Phase 1 notes (bottom of `PHASE_1_REQUIREMENTS.md`). 2. **Implement §2.1** (build order there; apply V5 as given). Then bring the code for review. |
-| **Decisions to raise** | None open. D1–D8 = the recommendations (2026-10-02), so every **↺ D#** line stands as written. ⏰ **D9: when Phase 2 closes, remind the user to schedule the §1.3–§1.6 tests** (planned lists in `PHASE_1_REQUIREMENTS.md`). |
+| **Done** | Brief (2026-10-01) · decisions D1–D9 (2026-10-02) · **§2.1** signing keys, sessions, tokens at login: built, reviewed, run (2026-10-07). **Tests skipped** (D10). Not yet committed at wrap-up. |
+| **Next** | **Implement §2.2** (bearer authentication, Basic removed, JSON 401/403). Then bring the code for review. Your 15-minute Phase 1 notes are still unwritten (bottom of `PHASE_1_REQUIREMENTS.md`). |
+| **Decisions to raise** | None open for §2.2. ⏰ **When Phase 2 closes, remind the user of the test debt:** §1.3–§1.6 (D9) **and §2.1** (D10); the planned lists are in each section's *Tests*. Also before §2.4: `revokeAllExcept` must refuse a null session id (review 2026-10-06). |
 | **Carried in** | See *Carried in from Phase 1*: filter-chain 401/403 as `ProblemDetail`, "reject tokens issued before `password_changed_at`" (closed by D5 + D7), §1.7 profile (§2.6), the §1.3–§1.6 tests (D9: deferred, raised at Phase 2's close), OpenAPI (after this phase). |
-| **Environment state** | Dev DB at **V4** (V1–V4 frozen). `global_id_seq` at 1801 (the verification used explicit ids, so it didn't move). Dev users as at the end of Phase 1 (alice ADMIN, bob unverified, carol verified, maybe locked). **`~/.m2` now holds the 6.5.11 *sources* jars** of `spring-security-oauth2-resource-server`, `-oauth2-jose` and `-oauth2-core` (I fetched them to verify the claims marked *(verified)*; the project's `pom.xml` is unchanged). |
+| **Environment state** | Dev DB at **V5** (V1–V5 frozen; V6 not yet added). Sessions and refresh tokens exist from the §2.1 runs (e.g. user 1802 `abhinavvgargg-jwt`, session 1952). The dev signing key is **ephemeral**: every restart invalidates access tokens. `pom.xml` has `spring-boot-starter-oauth2-resource-server`. `~/.m2` holds the 6.5.11 sources jars of the three `spring-security-oauth2-*` modules (fetched for verification). |
 | **Numbering** | Decisions are numbered **D1–D9** in this doc; the Decisions table holds them with dates. |
 
 ---
@@ -155,7 +155,7 @@ Each has options, a recommendation, and why the recommendation beats every alter
 
 ---
 
-## Decisions (D1–D9 decided 2026-10-02)
+## Decisions (D1–D9 decided 2026-10-02; later rows as dated)
 
 | # | Decision | Chosen | Options considered · the reasoning |
 |---|---|---|---|
@@ -168,6 +168,8 @@ Each has options, a recommendation, and why the recommendation beats every alter
 | D7 | **Password events and sessions**, decided 2026-10-02 | **Reset → all sessions · change → all others (keep current) · lockout → none · log out everywhere → all, including this one** | Options: as chosen · change kills current too · nothing revoked. Reset is takeover recovery; lockout revoking would let five bad guesses log the owner out everywhere. |
 | D8 | **Session list and revoke-one**, decided 2026-10-02 | **Built: `GET /users/me/sessions`, `DELETE /users/me/sessions/{id}`, `DELETE /users/me/sessions`, `POST /auth/logout`; first on the trim list after §2.6** | Options: build · logout and logout-all only. The lost-laptop case, and the first IDOR rule (another user's id → 404). |
 | D9 | **Phase 1 test debt (§1.3–§1.6)**, decided 2026-10-02 | **Deferred: raise it again when Phase 2 closes** (your call, not the recommendation) | Options: right after §2.2 (recommended) · end of Phase 2 · Phase 11. Your call; no reason recorded. Cost accepted: §2.4 edits `PasswordService` (revocation on reset/change) without Phase 1's reset/change tests as a safety net, so §2.4's own integration tests must cover reset and change end to end. |
+| D10 | **§2.1 tests**, decided 2026-10-07 | **Skipped for now; raised with D9 when Phase 2 closes** (your call) | The recommendation was to write them in §2.1 (the agreement lists testing at every phase as must-not-cut). Cost accepted: nothing automated proves the claims set, the cookie attributes, "no session on failed login", or that `prod` without a key refuses to start (the manual `prod` run can be masked by the missing `EmailSender`). §2.2 changes the security config, so those rules have no regression net while it does. |
+| D11 | **Insert-only session entities**, your approach, 2026-10-06 | **Every mutable column of `UserSession` / `RefreshToken` is `updatable = false`; every change is a conditional `@Modifying` update** | Better than the brief, which only said "touch the session with a conditional UPDATE": a stray entity flush **can't** write `revoked_at = NULL` back, so the whole-row resurrection bug (§2.3) is impossible even by mistake. Verified in Hibernate 6.6.53's source: HQL `SET` doesn't check `updatable`, so the bulk updates still write (runtime proof comes with §2.3's tests). |
 
 ---
 
@@ -195,7 +197,7 @@ Same as Phase 1 (`PROJECT_CONTEXT.md` §3.1): what → how & why (choices, alter
 
 ---
 
-## 2.1 — Signing keys, sessions, and tokens at login
+## 2.1 — Signing keys, sessions, and tokens at login ✅ built 2026-10-07 (tests skipped, D10)
 
 ### What we're building
 
@@ -215,7 +217,7 @@ A successful login now **starts a session** and hands back two credentials: a si
 5. **`SessionProperties`** (`taskflow.security.sessions`): refresh idle lifetime, absolute lifetime, reuse grace (§2.3), and the cookie's name, path, `Secure`, `SameSite`.
 6. **`user.session` package**: `UserSession` and `RefreshToken` entities, their repositories, and `SessionService` (transactional). The raw refresh token is made and hashed by Phase 1's **`TokenCodec`**.
 7. **`LoginService`** keeps its shape (not transactional, Phase 1's rollback lesson): authenticate → **start a session** → record `LOGIN_SUCCEEDED` → issue the access token.
-8. **`RefreshCookie`** (web layer, `user`): builds the `Set-Cookie` header to set or clear the refresh cookie, so the attributes live in one place.
+8. **`CookieSettings`** (web layer, `user`): builds the `Set-Cookie` header to set or clear the refresh cookie, so the attributes live in one place.
 
 **The claims**
 
@@ -240,6 +242,7 @@ A successful login now **starts a session** and hands back two credentials: a si
 | **Two tables: `user_sessions` (the family) + `refresh_tokens`** | Revocation is **one row** (`revoked_at` on the session), shared by refresh tokens *and* access tokens (via `sid`) | Updating N token rows to revoke; a "list my sessions" built from a `GROUP BY` |
 | **One live refresh token per session, enforced by a partial unique index** | A rotation bug or a race can never leave two live tokens in one family | Two tokens both rotating independently, forking the family (your §1.4 pattern, reused) |
 | **Sessions and tokens extend `IdentifiedEntity`, with domain-named timestamps** | `created_at`, `last_refreshed_at`, `revoked_at` say what happened | `created_by`/`updated_by` that are always `system` (login and refresh are anonymous requests) |
+| **Insert-only entities: mutable columns `updatable = false`, changes only through conditional `@Modifying` updates** *(your approach, D11)* | No entity flush can write a stale `revoked_at`, `consumed_at` or `last_refreshed_at` back | Phase 1's whole-row write undoing a concurrent change, by construction rather than by care |
 | **`SessionService.start` is its own transaction; `LoginService` stays non-transactional** | The session commits on its own, before the response | Phase 1's rollback trap: one failure undoing the counter or the event |
 | **Session created only after `authenticate()` succeeds**, and before `LOGIN_SUCCEEDED` is recorded | Unverified and locked logins never get a session; a failed session insert can't leave a "succeeded" event for a login that returned 500 | Sessions for users who couldn't log in; history that lies |
 | **Cookie: `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age` = the token's idle lifetime** ↺ D4 | JavaScript can't read it; it's only sent to the auth endpoints; it dies with the token | XSS stealing it (D4); sending it with every API call |
@@ -273,7 +276,7 @@ A successful login now **starts a session** and hands back two credentials: a si
 
 #### The migration (V5): you apply it; the SQL is below
 
-- [ ] `V5__create_user_sessions.sql` is added exactly as given, and the app starts with `ddl-auto: validate`.
+- [x] `V5__create_user_sessions.sql` is added exactly as given, and the app starts with `ddl-auto: validate`.
 
 ```sql
 -- One row per login: the "family" every refresh token of that login belongs to.
@@ -372,64 +375,64 @@ create unique index uk_refresh_tokens_active on refresh_tokens (session_id) wher
 
 #### `pom.xml`
 
-- [ ] `spring-boot-starter-oauth2-resource-server` is added, with no version (Boot manages it). ↺ D1
+- [x] `spring-boot-starter-oauth2-resource-server` is added, with no version (Boot manages it). ↺ D1
 
 #### `JwtProperties` (`taskflow.security.jwt`, `common/security`)
 
-- [ ] `issuer` and `audience` are required, non-blank.
-- [ ] `access-token-ttl` is required and positive (15 min ↺ D3).
-- [ ] `clock-skew` is required and not negative (5 s; see §2.2).
-- [ ] `key-id`, `private-key` and `public-key` are optional as a group: all three or none.
-- [ ] The keys are supplied as PEM text from environment variables or a file location; neither is ever in `application*.yml` with a real value.
+- [x] `issuer` and `audience` are required, non-blank.
+- [x] `access-token-ttl` is required and positive (15 min ↺ D3).
+- [x] `clock-skew` is required and not negative (5 s; see §2.2).
+- [x] `key-id`, `private-key` and `public-key` are optional as a group: all three or none.
+- [x] The keys are supplied as PEM text from environment variables or a file location; neither is ever in `application*.yml` with a real value.
 
 **Done when:** the app refuses to start with a blank issuer or a negative lifetime, naming the property.
 
 #### `JwtKeyConfig` (`common/security`) ↺ D2
 
-- [ ] With configured keys, it loads them and checks that the public key matches the private key.
-- [ ] Without configured keys in `dev` or `test`, it generates a 2048-bit RSA pair and a random key id, and logs one `WARN` (no key material in the log).
-- [ ] Without configured keys in `prod`, startup fails with a message naming the missing properties.
-- [ ] It exposes the `JwtEncoder` bean and, for §2.2, the public key.
+- [x] With configured keys, it loads them and checks that the public key matches the private key.
+- [x] Without configured keys in `dev` or `test`, it generates a 2048-bit RSA pair and a random key id, and logs one `WARN` (no key material in the log).
+- [x] Without configured keys in `prod`, startup fails with a message naming the missing properties.
+- [x] It exposes the `JwtEncoder` bean and, for §2.2, the public key.
 
 **Done when:** `dev` starts with the `WARN` line; `prod` with no key refuses to start.
 
 #### `AccessTokenIssuer` (`common/security`)
 
-- [ ] It signs with RS256 and puts the key id in the header.
-- [ ] It sets exactly the claims in the table above, and no others.
-- [ ] `iat` is the "now" it's given (from the injected `Clock`), and `exp` is `iat` + the access lifetime.
-- [ ] It returns the token and its expiry.
+- [x] It signs with RS256 and puts the key id in the header.
+- [x] It sets exactly the claims in the table above, and no others.
+- [x] `iat` is the "now" it's given (from the injected `Clock`), and `exp` is `iat` + the access lifetime.
+- [x] It returns the token and its expiry.
 
 **Done when:** a token decoded by hand (`base64 -d` on the middle part) shows those claims and no email.
 
 #### `SessionProperties` (`taskflow.security.sessions`, `user.session`)
 
-- [ ] `refresh-token-idle-ttl` (14 d), `absolute-ttl` (30 d) and `reuse-grace` (10 s) are required; the grace may be zero. ↺ D3, D6
-- [ ] The cookie's `name`, `path` (`/api/v1/auth`), `secure` (default `true`) and `same-site` (`Strict`) are configurable. ↺ D4
+- [x] `refresh-token-idle-ttl` (14 d), `absolute-ttl` (30 d) and `reuse-grace` (10 s) are required; the grace may be zero. ↺ D3, D6
+- [x] The cookie's `name`, `path` (`/api/v1/auth`), `secure` (default `true`) and `same-site` (`Strict`) are configurable. ↺ D4
 
 #### `UserSession` and `RefreshToken` (entities, `user.session`)
 
-- [ ] Both extend `IdentifiedEntity`; neither has setters.
-- [ ] `UserSession` is created by one factory from the account id, the client info, "now" and the absolute lifetime (one clock reading for `created_at`, `last_refreshed_at` and `expires_at`).
-- [ ] `RefreshToken` is created by one factory from the session, the hash, "now" and the idle expiry (already capped at the session's end).
-- [ ] `RefreshToken` → `UserSession` is `LAZY` (Phase 1 decision 16's reasoning).
-- [ ] Neither `toString()` prints a hash, an IP or a user agent.
+- [x] Both extend `IdentifiedEntity`; neither has setters.
+- [x] `UserSession` is created by one factory from the account id, the client info, "now" and the absolute lifetime (one clock reading for `created_at`, `last_refreshed_at` and `expires_at`).
+- [x] `RefreshToken` is created by one factory from the session, the hash, "now" and the idle expiry (already capped at the session's end).
+- [x] `RefreshToken` → `UserSession` is `LAZY` (Phase 1 decision 16's reasoning).
+- [x] Neither `toString()` prints a hash, an IP or a user agent.
 
 #### `SessionService.start` (`user.session`)
 
-- [ ] It's `@Transactional` and creates one session and its first refresh token together.
-- [ ] It returns the session id and the **raw** refresh token in a result type whose `toString()` masks the token.
-- [ ] The refresh token's expiry is the earlier of now + idle lifetime and the session's expiry.
+- [x] It's `@Transactional` and creates one session and its first refresh token together.
+- [x] It returns the session id and the **raw** refresh token in a result type whose `toString()` masks the token.
+- [x] The refresh token's expiry is the earlier of now + idle lifetime and the session's expiry.
 
 **Done when:** after a login, `user_sessions` has one live row and `refresh_tokens` has one unconsumed row whose hash is **not** the cookie's value.
 
 #### `LoginService` and `AuthController.login`
 
-- [ ] The authentication and its failure handling are unchanged (same 401/403 rules as Phase 1).
-- [ ] After a successful `authenticate()`, it starts a session, **then** records `LOGIN_SUCCEEDED`, then issues the access token.
-- [ ] No session is created when authentication fails, for any reason.
-- [ ] The controller sets the refresh cookie through `RefreshCookie` and returns the body below.
-- [ ] Neither the raw refresh token nor the access token is logged anywhere.
+- [x] The authentication and its failure handling are unchanged (same 401/403 rules as Phase 1).
+- [x] After a successful `authenticate()`, it starts a session, **then** records `LOGIN_SUCCEEDED`, then issues the access token.
+- [x] No session is created when authentication fails, for any reason.
+- [x] The controller sets the refresh cookie through `CookieSettings` and returns the body below.
+- [x] Neither the raw refresh token nor the access token is logged anywhere.
 
 **Endpoint**
 
@@ -446,7 +449,7 @@ create unique index uk_refresh_tokens_active on refresh_tokens (session_id) wher
 - **Order: session before `LOGIN_SUCCEEDED`.** The other way round, a failed session insert leaves history saying "succeeded" for a login that returned 500.
 - **Don't make `login` `@Transactional`** to "keep it consistent": that's Phase 1's rollback trap (the failure counter and events must survive a failed authentication).
 - **`expiresIn` is seconds.** `Duration.toMillis()` here makes clients wait 1000× too long to refresh.
-- **`Secure` cookies over `http://localhost`.** Browsers treat localhost as secure, but check what your `curl` does with a `Secure` cookie over plain HTTP **in the run step** (not verified). If it drops the cookie, `dev` sets `secure: false`; `prod` never does.
+- **`Secure` cookies over `http://localhost`.** *Verified 2026-10-07 with curl 8.7.1 (macOS) against a throwaway server:* the jar keeps the cookie for `localhost` and `127.0.0.1` with its `Secure` flag, sends it back to `/api/v1/auth/*` only, and never to `/api/v1/organizations`. So `dev` keeps `secure: true`. ⚠️ In the jar file the line starts with `#HttpOnly_localhost`, which looks like a comment: `grep -v '^#'` hides it (it fooled my first check).
 - **The ephemeral key and restarts.** After a dev restart, every access token fails (§2.2). That's expected; the client refreshes. It's also why the ephemeral key is never allowed in `prod`.
 - **`common` never imports a feature** *(Phase 1, hit twice)*. `AccessTokenIssuer` takes ids and strings, not a `UserAccount`.
 
@@ -466,10 +469,10 @@ create unique index uk_refresh_tokens_active on refresh_tokens (session_id) wher
 3. `JwtProperties`, `JwtKeyConfig`, the encoder. Start in `dev` (the `WARN`), then `prod` without a key. → *Deliberate failure 4.*
 4. `AccessTokenIssuer` and its unit test.
 5. The entities, repositories, `SessionProperties`, `SessionService.start`.
-6. Wire `LoginService` and the controller; `RefreshCookie`.
+6. Wire `LoginService` and the controller; `CookieSettings`.
 7. Run it: log in with a cookie jar, decode the token by hand, look at both tables. → *Deliberate failures 1 and 2.*
 
-### Tests
+### Tests ⏭️ skipped 2026-10-07 (D10); the list stays for when they're written
 
 | Kind | Must prove |
 |---|---|
@@ -951,7 +954,7 @@ A user can end **this** session (`POST /auth/logout`), **all** sessions (`DELETE
 | 1. Look up the session by id only (no owner in the query); delete someone else's id | 204, and their device logged out | IDOR: the owner belongs in the query |
 | 2. Revoke sessions in `PasswordWorkflow` **after** `confirmReset` returns, and make it fail (throw) | Password reset, attacker's session still live | Revocation commits with the change, or not at all |
 | 3. Clear the cookie with a different `Path` | The browser (or jar) keeps the old cookie | Cookie identity is name + domain + path |
-| 4. Revoke all sessions **except** none on change (pass a null sid) | The user is logged out of the device they just changed the password on | Pass the principal's `sessionId` through |
+| 4. Pass a null `sid` to `revokeAllExcept` on change | **No session is revoked at all**, silently: `id <> NULL` is unknown in SQL, so the `WHERE` matches no row | SQL's three-valued logic. Assert the id isn't null before the query. *(Corrected 2026-10-06: my brief first predicted "logged out of the changing device"; that was wrong.)* |
 
 ### Build order
 
@@ -1173,7 +1176,7 @@ A browser frontend on an allowed origin (dev: `http://localhost:3000`) can call 
 - [ ] `created_by` = the username for bearer-authenticated writes.
 - [ ] No access token, refresh token, email or password in the logs at INFO.
 - [ ] Suite green; the Basic-based tests are migrated, not disabled.
-- [ ] ⏰ **D9 raised:** the §1.3–§1.6 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
+- [ ] ⏰ **D9 + D10 raised:** the §1.3–§1.6 and §2.1 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
 - [ ] README updated: login, refresh, logout, the cookie, bearer usage with curl (`-c`/`-b` jar), and that Basic is gone.
 - [ ] `PROJECT_CONTEXT.md` §5's Phase 2 row matches what was built (D1).
 - [ ] Small commits, about one per sub-section, staged by file name.
@@ -1207,7 +1210,7 @@ Each is referenced from its section's build order; the detail is there.
 | 2.4 | Session by id only | Another user's device logged out |
 | 2.4 | Revocation after the reset transaction, failing | Attacker still in |
 | 2.4 | Clearing cookie with another `Path` | Old cookie kept |
-| 2.4 | Change with a null `sid` | Logged out of the changing device |
+| 2.4 | Change with a null `sid` | Nothing revoked, silently (`id <> NULL`) |
 | 2.5 | No `http.cors` | Preflight 401 |
 | 2.5 | Registrations swapped | No credentials on refresh |
 | 2.5 | `*` with credentials | Refused |

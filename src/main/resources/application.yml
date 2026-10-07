@@ -24,6 +24,22 @@ taskflow:
     lockout:
       max-failed-attempts: 5
       duration: 15m
+    jwt:
+      issuer: taskflow
+      audience: taskflow-api
+      access-token-ttl: 15m
+      clock-skew: 5s
+      key-id:
+      private-key:
+      public-key:
+    sessions:
+      refresh-token-idle-ttl: 14d
+      absolute-ttl: 30d
+      reuse-grace: 10s
+      cookie:
+        name: taskflow_refresh
+        path: /api/v1/auth
+        same-site: strict
 
 server:
   error:

@@ -272,6 +272,6 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 > Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3. Then read the current phase's `docs/phase-N/PHASE_N_REQUIREMENTS.md` and `PHASE_N_LEARNING_LOG.md`, and the testing guides. We're on **§N.x** — brief it in the section 3.1 layout; requirements, not code.
 
-**Resuming right now (Phase 2: decisions taken 2026-10-02, §2.1 next):**
+**Resuming right now (Phase 2: §2.1 done 2026-10-07, §2.2 next):**
 
-> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read `docs/phase-2/PHASE_2_REQUIREMENTS.md` in full (start with "Where we are" and the Decisions table), `docs/phase-1/PHASE_1_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. D1–D9 are decided (Decisions table). We're on **§2.1**: I'm implementing it, or bringing it for review. Remind me of D9 (the Phase 1 test debt) when Phase 2 closes.
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read `docs/phase-2/PHASE_2_REQUIREMENTS.md` ("Where we are", the Decisions table, and §2.2 in full), `docs/phase-2/PHASE_2_LEARNING_LOG.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` and `docs/phase-0/TESTING_GUIDE.md`. We're on **§2.2**: I'm implementing it, or bringing it for review. When Phase 2 closes, remind me of the test debt (D9: §1.3–§1.6, D10: §2.1).

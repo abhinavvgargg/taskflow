@@ -1,11 +1,15 @@
 package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.common.error.LoginFailedException;
+import com.abhinav.taskflow.common.security.AccessTokenIssuer;
+import com.abhinav.taskflow.common.security.IssuedAccessToken;
 import com.abhinav.taskflow.common.security.TaskflowPrincipal;
 import com.abhinav.taskflow.common.util.Normalize;
 import com.abhinav.taskflow.common.web.ClientInfo;
 import com.abhinav.taskflow.user.event.LoginFailureReason;
 import com.abhinav.taskflow.user.event.SecurityEventRecorder;
+import com.abhinav.taskflow.user.session.SessionService;
+import com.abhinav.taskflow.user.session.StartedSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -15,6 +19,9 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.stereotype.Service;
+
+import java.time.Clock;
+import java.time.Instant;
 
 /**
  * Deliberately NOT transactional: a failed authentication must not roll back the failure counter
@@ -29,8 +36,11 @@ public class LoginService {
     private final AuthenticationManager authenticationManager;
     private final UserAccountRepository userAccountRepository;
     private final SecurityEventRecorder securityEventRecorder;
+    private final SessionService sessionService;
+    private final AccessTokenIssuer accessTokenIssuer;
+    private final Clock clock;
 
-    public UserAccountResponse login (LoginRequest loginRequest, ClientInfo clientInfo) {
+    public LoginResult login (LoginRequest loginRequest, ClientInfo clientInfo) {
 
         String email = Normalize.normalizeEmail(loginRequest.email());
         UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.unauthenticated(email, loginRequest.password());
@@ -59,11 +69,21 @@ public class LoginService {
             throw new IllegalStateException("Principal is not a TaskflowPrincipal");
         }
 
+        // NEW: one clock reading for the session's created_at and the access token's iat
+        Instant now = clock.instant();
+
+        // NEW: session BEFORE the event, so a failed insert can't leave a "succeeded" record for a 500
+        StartedSession session = sessionService.start(taskflowPrincipal.getId(), clientInfo, now);
+
         securityEventRecorder.recordLoginSucceeded(taskflowPrincipal.getId(), clientInfo);
 
         UserAccount userAccount = userAccountRepository.findById(taskflowPrincipal.getId()).orElseThrow(() -> new IllegalStateException("User not found"));
 
-        return UserAccountResponse.from(userAccount);
+        // NEW
+        IssuedAccessToken accessToken = accessTokenIssuer.issue(
+                userAccount.getId(), userAccount.getUsername(), userAccount.getRole().name(), session.sessionId(), now);
+
+        return new LoginResult(accessToken, session, UserAccountResponse.from(userAccount));
     }
 
     /** Looks the account up only after authentication has failed, and only to record it; unknown emails record nothing. */
