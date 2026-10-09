@@ -3,13 +3,13 @@
 > Companion to `../PROJECT_CONTEXT.md` · what Phase 1 built and learned: `../phase-1/PHASE_1_LEARNING_LOG.md` · test patterns: `../phase-0/TESTING_GUIDE.md` and `../phase-1/SECURITY_TESTING_GUIDE.md`. Requirements only, no code (the migration SQL is provided, as agreed). Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** The Phase 1 test debt isn't in it (D9: raised again when Phase 2 closes). Anything unfinished becomes a side task in Phase 3.
 
-## ▶ Where we are (resume here) — §2.1 done 2026-10-07, §2.2 next
+## ▶ Where we are (resume here) — §2.2 done 2026-10-09, §2.3 next
 
 | | |
 |---|---|
-| **Done** | Brief (2026-10-01) · decisions D1–D9 (2026-10-02) · **§2.1** signing keys, sessions, tokens at login: built, reviewed, run (2026-10-07). **Tests skipped** (D10). Not yet committed at wrap-up. |
-| **Next** | **Implement §2.2** (bearer authentication, Basic removed, JSON 401/403). Then bring the code for review. Your 15-minute Phase 1 notes are still unwritten (bottom of `PHASE_1_REQUIREMENTS.md`). |
-| **Decisions to raise** | None open for §2.2. ⏰ **When Phase 2 closes, remind the user of the test debt:** §1.3–§1.6 (D9) **and §2.1** (D10); the planned lists are in each section's *Tests*. Also before §2.4: `revokeAllExcept` must refuse a null session id (review 2026-10-06). |
+| **Done** | Brief (2026-10-01) · decisions D1–D9 (2026-10-02) · **§2.1** keys, sessions, tokens at login (`9b10252`, 2026-10-07; tests skipped, D10) · **§2.2** bearer authentication, Basic removed, JSON 401/403 (2026-10-09; existing tests migrated + 5 new integration tests; §2.2's own test list skipped, D12). §2.2 not yet committed at wrap-up. |
+| **Next** | **Implement §2.3** (refresh: rotation, reuse detection, V6, `Origin` check). Then bring the code for review. Your 15-minute Phase 1 notes are still unwritten. |
+| **Decisions to raise** | None open for §2.3. ⏰ **When Phase 2 closes, remind the user of the test debt:** §1.3–§1.6 (D9), §2.1 (D10), §2.2's list (D12). Before §2.4: `revokeAllExcept` must refuse a null session id. Suite numbers after §2.2 (count, time, containers) weren't reported: measure at the next run. |
 | **Carried in** | See *Carried in from Phase 1*: filter-chain 401/403 as `ProblemDetail`, "reject tokens issued before `password_changed_at`" (closed by D5 + D7), §1.7 profile (§2.6), the §1.3–§1.6 tests (D9: deferred, raised at Phase 2's close), OpenAPI (after this phase). |
 | **Environment state** | Dev DB at **V5** (V1–V5 frozen; V6 not yet added). Sessions and refresh tokens exist from the §2.1 runs (e.g. user 1802 `abhinavvgargg-jwt`, session 1952). The dev signing key is **ephemeral**: every restart invalidates access tokens. `pom.xml` has `spring-boot-starter-oauth2-resource-server`. `~/.m2` holds the 6.5.11 sources jars of the three `spring-security-oauth2-*` modules (fetched for verification). |
 | **Numbering** | Decisions are numbered **D1–D9** in this doc; the Decisions table holds them with dates. |
@@ -170,6 +170,7 @@ Each has options, a recommendation, and why the recommendation beats every alter
 | D9 | **Phase 1 test debt (§1.3–§1.6)**, decided 2026-10-02 | **Deferred: raise it again when Phase 2 closes** (your call, not the recommendation) | Options: right after §2.2 (recommended) · end of Phase 2 · Phase 11. Your call; no reason recorded. Cost accepted: §2.4 edits `PasswordService` (revocation on reset/change) without Phase 1's reset/change tests as a safety net, so §2.4's own integration tests must cover reset and change end to end. |
 | D10 | **§2.1 tests**, decided 2026-10-07 | **Skipped for now; raised with D9 when Phase 2 closes** (your call) | The recommendation was to write them in §2.1 (the agreement lists testing at every phase as must-not-cut). Cost accepted: nothing automated proves the claims set, the cookie attributes, "no session on failed login", or that `prod` without a key refuses to start (the manual `prod` run can be masked by the missing `EmailSender`). §2.2 changes the security config, so those rules have no regression net while it does. |
 | D11 | **Insert-only session entities**, your approach, 2026-10-06 | **Every mutable column of `UserSession` / `RefreshToken` is `updatable = false`; every change is a conditional `@Modifying` update** | Better than the brief, which only said "touch the session with a conditional UPDATE": a stray entity flush **can't** write `revoked_at = NULL` back, so the whole-row resurrection bug (§2.3) is impossible even by mistake. Verified in Hibernate 6.6.53's source: HQL `SET` doesn't check `updatable`, so the bulk updates still write (runtime proof comes with §2.3's tests). |
+| D12 | **§2.2 tests**, decided 2026-10-09 | **The tests §2.2 lists beyond the migration are skipped; raised with D9/D10 when Phase 2 closes** (your call) | Written: the Basic-based tests migrated to bearer logins, and 5 new integration tests (Basic rejected, malformed token 401 + `WWW-Authenticate`, bad token ignored on `/auth/login`, 401 and 403 bodies as `ProblemDetail`). Skipped: the revoked-session 401 (D5's core), the expiry boundary with an adjustable clock, `alg: none` / wrong key / wrong `aud`, the converter's rejections, change-password with a bearer token, no `Set-Cookie` on bearer requests. Cost accepted: §2.3–§2.4 build on the session check with only manual runs proving it. |
 
 ---
 
@@ -485,7 +486,7 @@ create unique index uk_refresh_tokens_active on refresh_tokens (session_id) wher
 
 ---
 
-## 2.2 — Bearer authentication on every request
+## 2.2 — Bearer authentication on every request ✅ built 2026-10-09 (own test list skipped, D12)
 
 ### What we're building
 
@@ -561,66 +562,66 @@ The `detail` is a fixed sentence per code. **Never the exception's message**: th
 
 #### `JwtDecoder` bean (`common/security`) ↺ D1, D2
 
-- [ ] It verifies with the public key from `JwtKeyConfig` and accepts only RS256.
-- [ ] Its validators are: timestamps (injected `Clock`, configured skew), issuer, audience.
-- [ ] They're combined with `JwtValidators.createDefaultWithValidators`, never set alone.
+- [x] It verifies with the public key from `JwtKeyConfig` and accepts only RS256.
+- [x] Its validators are: timestamps (injected `Clock`, configured skew), issuer, audience.
+- [x] They're combined with `JwtValidators.createDefaultWithValidators`, never set alone.
 
 **Done when:** an expired token, a token with another `aud`, and a token signed by another key each get 401 `INVALID_ACCESS_TOKEN`.
 
 #### `SessionStatus` (interface, `common/security`) and its implementation (`user.session`) ↺ D5
 
-- [ ] It answers whether a session id belongs to a user id, isn't revoked, and hasn't passed its `expires_at`.
-- [ ] The query selects no entity (a projection or `exists`): it's on the path of every request.
-- [ ] A database error propagates.
+- [x] It answers whether a session id belongs to a user id, isn't revoked, and hasn't passed its `expires_at`.
+- [x] The query selects no entity (a projection or `exists`): it's on the path of every request.
+- [x] A database error propagates.
 
 #### `SessionJwtConverter` (`common/security`)
 
-- [ ] It rejects a token missing `sid`, `sub`, `preferred_username` or `role`, or with an unknown role.
-- [ ] It rejects a token whose session isn't live (`SessionStatus`).
-- [ ] It builds `TaskflowAuthenticationToken` with an `AuthenticatedUser` principal and one `ROLE_` authority, marked authenticated.
-- [ ] `getName()` returns the username.
+- [x] It rejects a token missing `sid`, `sub`, `preferred_username` or `role`, or with an unknown role.
+- [x] It rejects a token whose session isn't live (`SessionStatus`).
+- [x] It builds `TaskflowAuthenticationToken` with an `AuthenticatedUser` principal and one `ROLE_` authority, marked authenticated.
+- [x] `getName()` returns the username.
 
 #### `AuthenticatedUser` and `TaskflowAuthenticationToken` (`common/security`)
 
-- [ ] `AuthenticatedUser` holds id, username, role and session id, and nothing else.
-- [ ] The token's credentials are not exposed (`getCredentials()` returns nothing useful).
+- [x] `AuthenticatedUser` holds id, username, role and session id, and nothing else.
+- [x] The token's credentials are not exposed (`getCredentials()` returns nothing useful).
 
 #### `BearerTokenResolver` bean (`common/security`)
 
-- [ ] It returns no token for any path under `/api/v1/auth/`.
-- [ ] Everywhere else it behaves like Spring's default (header only; no query parameter; several tokens → 400).
+- [x] It returns no token for any path under `/api/v1/auth/`.
+- [x] Everywhere else it behaves like Spring's default (header only; no query parameter; several tokens → 400).
 
 #### `ProblemAuthenticationEntryPoint` and `ProblemAccessDeniedHandler` (`common/security`)
 
-- [ ] They write `application/problem+json` with `type`, `title`, `status`, `detail`, `instance`, `code`, `timestamp` and `correlationId`, matching `GlobalExceptionHandler`.
-- [ ] They build the body through one shared factory in `common/error`, not a copy of the handler's code.
-- [ ] The entry point sets `WWW-Authenticate` as in the error-code table and keeps the `BearerTokenError` status.
-- [ ] The `detail` never contains an exception message.
+- [x] They write `application/problem+json` with `type`, `title`, `status`, `detail`, `instance`, `code`, `timestamp` and `correlationId`, matching `GlobalExceptionHandler`.
+- [x] They build the body through one shared factory in `common/error`, not a copy of the handler's code.
+- [x] The entry point sets `WWW-Authenticate` as in the error-code table and keeps the `BearerTokenError` status.
+- [x] The `detail` never contains an exception message.
 
 **Done when:** an anonymous `GET /api/v1/organizations`, an expired token, and a `USER` calling `/actuator/metrics` each return a `ProblemDetail` with a `correlationId`.
 
 #### `TaskflowSecurityConfig`
 
-- [ ] `httpBasic` is removed.
-- [ ] `oauth2ResourceServer` uses the decoder, the converter, the resolver and the entry point.
-- [ ] `exceptionHandling` uses the same entry point and the access-denied handler.
-- [ ] `POST /api/v1/auth/refresh` and `POST /api/v1/auth/logout` are added to the `permitAll` list.
-- [ ] Every other rule is unchanged, and `denyAll()` is still last.
-- [ ] The CSRF comment is rewritten: bearer headers aren't attached by browsers; the two cookie endpoints are protected in §2.3.
+- [x] `httpBasic` is removed.
+- [x] `oauth2ResourceServer` uses the decoder, the converter, the resolver and the entry point.
+- [x] `exceptionHandling` uses the same entry point and the access-denied handler.
+- [x] `POST /api/v1/auth/refresh` and `POST /api/v1/auth/logout` are added to the `permitAll` list.
+- [x] Every other rule is unchanged, and `denyAll()` is still last.
+- [x] The CSRF comment is rewritten: bearer headers aren't attached by browsers; the two cookie endpoints are protected in §2.3.
 
 #### `AuditAwareImpl`, `UserController`, `PasswordWorkflow`
 
-- [ ] The auditor writes `AuthenticatedUser.username`, and `system` otherwise.
-- [ ] `/users/me/*` endpoints take `@AuthenticationPrincipal(errorOnInvalidType = true) AuthenticatedUser`.
-- [ ] `changePassword` loads the account's email by the principal's id before re-authenticating through the manager.
-- [ ] `AuthenticationEventsListener.onSuccess` still reacts **only** to `TaskflowPrincipal` (password authentications).
+- [x] The auditor writes `AuthenticatedUser.username`, and `system` otherwise.
+- [x] `/users/me/*` endpoints take `@AuthenticationPrincipal(errorOnInvalidType = true) AuthenticatedUser`.
+- [x] `changePassword` loads the account's email by the principal's id before re-authenticating through the manager.
+- [x] `AuthenticationEventsListener.onSuccess` still reacts **only** to `TaskflowPrincipal` (password authentications).
 
 **Done when:** an organization created with a bearer token has `created_by` = the username; changing a password with a bearer token works and still counts a wrong current password.
 
 #### Tests that used Basic
 
-- [ ] `TaskflowSecurityIntegrationTest` and `OrganizationApiIntegrationTest` log in through `/auth/login` (a small helper next to `TestUsers`) and send the bearer token.
-- [ ] The security slice provides a mocked `JwtDecoder` and `SessionStatus` (the config needs them to start).
+- [x] `TaskflowSecurityIntegrationTest` and `OrganizationApiIntegrationTest` log in through `/auth/login` (a small helper next to `TestUsers`) and send the bearer token.
+- [x] The security slice provides a mocked `JwtDecoder` and `SessionStatus` (the config needs them to start).
 
 **Access table after §2.2** (replaces the Basic rows; the rest of Phase 1's table stands)
 
@@ -638,6 +639,9 @@ The `detail` is a fixed sentence per code. **Never the exception's message**: th
 ### Traps ⚠️
 
 - **`setJwtValidator(audienceValidator)` turns off expiry.** The default validator is the only thing checking `exp`; setting your own **replaces** it (*verified* in `NimbusJwtDecoder`). Use `createDefaultWithValidators`.
+- **A token with no `exp` passes the timestamp validator** (*verified*: `JwtTimestampValidator` only checks `exp` when it's present). *My brief missed this; your review-time code caught it (2026-10-09)* with an explicit `JwtClaimValidator` requiring `exp`. Only our key can sign, so the practical risk is a future bug in our own issuer minting immortal tokens; the validator makes that impossible to accept.
+- **Keep your `JwtTimestampValidator` a direct argument of `createDefaultWithValidators`.** It only skips adding its own default (system clock, 60 s skew) when it finds a `JwtTimestampValidator` at the top level of the list (*verified*). Wrap yours in another `DelegatingOAuth2TokenValidator` and a second, default one appears, and test-clock expiry tests go wrong.
+- **The JWT converter must not be a Spring bean** *(your call, 2026-10-09)*: Boot adds every `Converter` bean to MVC's conversion service, so a `Converter<Jwt, …>` bean would leak into request binding.
 - **The timestamp validator ignores your `Clock`** unless you call `setClock` (*verified*: it defaults to `Clock.systemUTC()`). Tests with `Clock.fixed` issue tokens whose `exp` is "in the past" to the decoder.
 - **An invalid token on a `permitAll` path is still a 401** (*verified*: the filter calls the entry point when authentication fails, before authorization runs). Clients attach the token everywhere; hence the resolver rule.
 - **Half the 401s with an empty body.** `exceptionHandling().authenticationEntryPoint(...)` covers "no token"; the bearer filter uses the resource server's own entry point for "bad token" (*verified*). Set both.
@@ -673,7 +677,7 @@ The `detail` is a fixed sentence per code. **Never the exception's message**: th
 6. Migrate the Basic tests; run the suite. 📊 Container count and time vs Phase 1's 76 tests / 2 containers.
 7. → *Deliberate failure 7.*
 
-### Tests
+### Tests ⏭️ partly skipped 2026-10-09 (D12): migration + 5 integration tests written; the rest of this list stays for later
 
 | Kind | Must prove |
 |---|---|
@@ -1176,7 +1180,7 @@ A browser frontend on an allowed origin (dev: `http://localhost:3000`) can call 
 - [ ] `created_by` = the username for bearer-authenticated writes.
 - [ ] No access token, refresh token, email or password in the logs at INFO.
 - [ ] Suite green; the Basic-based tests are migrated, not disabled.
-- [ ] ⏰ **D9 + D10 raised:** the §1.3–§1.6 and §2.1 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
+- [ ] ⏰ **D9 + D10 + D12 raised:** the §1.3–§1.6, §2.1 and §2.2 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
 - [ ] README updated: login, refresh, logout, the cookie, bearer usage with curl (`-c`/`-b` jar), and that Basic is gone.
 - [ ] `PROJECT_CONTEXT.md` §5's Phase 2 row matches what was built (D1).
 - [ ] Small commits, about one per sub-section, staged by file name.

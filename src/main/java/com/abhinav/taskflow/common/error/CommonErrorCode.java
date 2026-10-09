@@ -11,6 +11,10 @@ public enum CommonErrorCode implements ErrorCode {
     INVALID_SORT_PROPERTY(HttpStatus.BAD_REQUEST, "Invalid sort property"),
     RESOURCE_CONFLICT(HttpStatus.CONFLICT, "Resource conflict"),
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "Bad request"),
+    // The security gate's errors: written by the filter chain's entry point / access-denied handler
+    AUTHENTICATION_REQUIRED(HttpStatus.UNAUTHORIZED, "Authentication required"),
+    INVALID_ACCESS_TOKEN(HttpStatus.UNAUTHORIZED, "Invalid access token"),
+    ACCESS_DENIED(HttpStatus.FORBIDDEN, "Access denied"),
     NOT_FOUND(HttpStatus.NOT_FOUND, "Not found"),
     METHOD_NOT_ALLOWED(HttpStatus.METHOD_NOT_ALLOWED, "Method not allowed"),
     UNSUPPORTED_MEDIA_TYPE(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "Unsupported media type"),

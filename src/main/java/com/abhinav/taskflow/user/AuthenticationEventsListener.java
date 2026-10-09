@@ -21,6 +21,12 @@ public class AuthenticationEventsListener {
         loginAttemptService.recordFailure(authentication.getName(), remoteAddressOf(authentication));
     }
 
+    /**
+     * Only PASSWORD authentications (login, change-password) reset the counter: their principal is a TaskflowPrincipal.
+     * A success event is also published on EVERY bearer request (principal: AuthenticatedUser). Don't drop this
+     * type check: it would add a write per request, and the owner's own open tab would keep resetting the counter
+     * while an attacker guesses the password, so lockout would never trigger.
+     */
     @EventListener
     public void onSuccess(AuthenticationSuccessEvent event) {
         if (event.getAuthentication().getPrincipal() instanceof TaskflowPrincipal taskflowPrincipal) {
@@ -28,7 +34,7 @@ public class AuthenticationEventsListener {
         }
     }
 
-    /** The socket address: Basic sets these details itself, LoginService sets them explicitly. Null if absent, never a placeholder. */
+    /** The socket address: LoginService and PasswordWorkflow set these details explicitly. Null if absent, never a placeholder. */
     private static String remoteAddressOf(Authentication authentication) {
         return authentication.getDetails() instanceof WebAuthenticationDetails details ? details.getRemoteAddress() : null;
     }

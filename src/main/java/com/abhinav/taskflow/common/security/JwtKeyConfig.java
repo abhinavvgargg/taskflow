@@ -9,7 +9,16 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
 import org.springframework.security.converter.RsaKeyConverters;
+import org.springframework.security.oauth2.jose.jws.SignatureAlgorithm;
+import org.springframework.security.oauth2.jwt.JwtAudienceValidator;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtEncoder;
+import org.springframework.security.oauth2.jwt.JwtIssuerValidator;
+import org.springframework.security.oauth2.jwt.JwtTimestampValidator;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 import java.io.ByteArrayInputStream;
@@ -20,7 +29,10 @@ import java.security.KeyPairGenerator;
 import java.security.NoSuchAlgorithmException;
 import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
+import java.time.Clock;
+import java.time.Instant;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -57,6 +69,28 @@ public class JwtKeyConfig {
                 .keyID(signingKey.keyId())
                 .build();
         return new NimbusJwtEncoder(new ImmutableJWKSet<>(new JWKSet(jwk)));
+    }
+
+    @Bean
+    JwtDecoder jwtDecoder(JwtSigningKey signingKey, JwtProperties properties, Clock clock) {
+        // RS256 only, fixed here: the token's own alg header is never trusted (alg: none, algorithm confusion)
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(signingKey.publicKey())
+                .signatureAlgorithm(SignatureAlgorithm.RS256)
+                .build();
+
+        // Defaults to Clock.systemUTC() and a 60 s skew unless told otherwise
+        JwtTimestampValidator timestamps = new JwtTimestampValidator(properties.clockSkew());
+        timestamps.setClock(clock);
+
+        // createDefaultWithValidators ADDS to the defaults; setJwtValidator with a bare validator would REPLACE them,
+        // and the timestamp validator is the only thing checking exp. It also passes a token with no exp, hence the
+        // explicit "exp present" check.
+        decoder.setJwtValidator(JwtValidators.createDefaultWithValidators(
+                timestamps,
+                new JwtClaimValidator<Instant>(JwtClaimNames.EXP, Objects::nonNull),
+                new JwtIssuerValidator(properties.issuer()),
+                new JwtAudienceValidator(properties.audience())));
+        return decoder;
     }
 
     private static JwtSigningKey loadConfiguredKey(JwtProperties properties) {

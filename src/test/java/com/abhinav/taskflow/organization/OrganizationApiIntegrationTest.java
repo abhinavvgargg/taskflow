@@ -2,6 +2,7 @@ package com.abhinav.taskflow.organization;
 
 import com.abhinav.taskflow.TestcontainersConfiguration;
 import com.abhinav.taskflow.common.web.PageResponse;
+import com.abhinav.taskflow.user.TestLogins;
 import com.abhinav.taskflow.user.TestUsers;
 import com.abhinav.taskflow.user.UserAccountRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpMethod;
@@ -46,6 +48,9 @@ class OrganizationApiIntegrationTest {
     @Autowired
     JdbcTemplate jdbcTemplate;
 
+    @Autowired
+    RestTemplateBuilder restTemplateBuilder;
+
     private TestRestTemplate asUser;
 
     @BeforeEach
@@ -55,7 +60,7 @@ class OrganizationApiIntegrationTest {
         TestUsers testUsers = new TestUsers(userAccountRepository, passwordEncoder, jdbcTemplate);
         testUsers.deleteAll();
         testUsers.createVerifiedUser(USERNAME);
-        asUser = restTemplate.withBasicAuth(TestUsers.emailOf(USERNAME), TestUsers.PASSWORD);
+        asUser = TestLogins.as(restTemplateBuilder, restTemplate, USERNAME);
     }
 
     @Test

@@ -2,7 +2,7 @@ package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.common.error.CommonErrorUtility;
 import com.abhinav.taskflow.common.error.ResourceInvalidException;
-import com.abhinav.taskflow.common.security.TaskflowPrincipal;
+import com.abhinav.taskflow.common.security.AuthenticatedUser;
 import com.abhinav.taskflow.common.web.ClientInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +24,7 @@ public class PasswordWorkflow {
     private final PasswordService passwordService;
     private final AccountEmails accountEmails;
     private final AuthenticationManager authenticationManager;
+    private final UserAccountRepository userAccountRepository;
 
     public void requestReset(String email) {
 
@@ -45,12 +46,17 @@ public class PasswordWorkflow {
         accountEmails.sendPasswordChangedEmail(accountContact.accountId(), accountContact.email());
     }
 
-    public void changePassword(TaskflowPrincipal taskflowPrincipal, ChangePasswordRequest changePasswordRequest, ClientInfo clientInfo) {
+    public void changePassword(AuthenticatedUser authenticatedUser, ChangePasswordRequest changePasswordRequest, ClientInfo clientInfo) {
         if (changePasswordRequest.newPassword().equals(changePasswordRequest.currentPassword())) {
             throw new ResourceInvalidException(UserErrorCode.PASSWORD_UNCHANGED, "Old and new passwords cannot be same.").with("field", "newPassword");
         }
 
-        UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.unauthenticated(taskflowPrincipal.getUsername(), changePasswordRequest.currentPassword());
+        // The bearer principal has no email (the token carries none, on purpose). Load it by id; never add it to the token.
+        String email = userAccountRepository.findEmailById(authenticatedUser.id())
+                .orElseThrow(() -> new IllegalStateException("Authenticated account no longer exists"));
+
+        // Through the manager, like a login: a wrong current password counts toward lockout
+        UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.unauthenticated(email, changePasswordRequest.currentPassword());
         authentication.setDetails(new WebAuthenticationDetails(clientInfo.ipAddress(), null));
 
         try {
@@ -63,7 +69,7 @@ public class PasswordWorkflow {
             throw e;
         }
 
-        AccountContact accountContact = passwordService.applyChange(taskflowPrincipal.getId(), changePasswordRequest.newPassword(),  clientInfo);
+        AccountContact accountContact = passwordService.applyChange(authenticatedUser.id(), changePasswordRequest.newPassword(),  clientInfo);
         accountEmails.sendPasswordChangedEmail(accountContact.accountId(), accountContact.email());
     }
 }

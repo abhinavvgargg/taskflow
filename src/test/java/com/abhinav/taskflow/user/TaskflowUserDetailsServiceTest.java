@@ -1,6 +1,7 @@
 package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.common.security.TaskflowPrincipal;
+import com.abhinav.taskflow.common.security.UserRole;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

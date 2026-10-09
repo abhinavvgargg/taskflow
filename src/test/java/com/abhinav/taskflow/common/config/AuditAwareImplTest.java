@@ -1,6 +1,9 @@
 package com.abhinav.taskflow.common.config;
 
+import com.abhinav.taskflow.common.security.AuthenticatedUser;
+import com.abhinav.taskflow.common.security.TaskflowAuthenticationToken;
 import com.abhinav.taskflow.common.security.TaskflowPrincipal;
+import com.abhinav.taskflow.common.security.UserRole;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.authentication.AnonymousAuthenticationToken;
@@ -30,12 +33,21 @@ class AuditAwareImplTest {
     }
 
     @Test
-    void taskflowPrincipal_recordsTheAppUsername_notTheEmail() {
+    void bearerPrincipal_recordsTheAppUsername() {
+        authenticate(new TaskflowAuthenticationToken(new AuthenticatedUser(1L, "alice", UserRole.USER, 10L)));
+
+        assertThat(auditor.getCurrentAuditor()).contains("alice");
+    }
+
+    @Test
+    void passwordPrincipal_recordsSystem() {
+        // TaskflowPrincipal only exists while a password is checked (login, change-password); requests carry
+        // AuthenticatedUser since §2.2. If this ever returned "alice", the auditor would be reading the wrong type.
         var principal = new TaskflowPrincipal(1L, "alice", "alice@example.com", "{bcrypt}hash",
                 List.of(), true, true);
         authenticate(UsernamePasswordAuthenticationToken.authenticated(principal, null, principal.getAuthorities()));
 
-        assertThat(auditor.getCurrentAuditor()).contains("alice");
+        assertThat(auditor.getCurrentAuditor()).contains("system");
     }
 
     @Test

@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
@@ -35,6 +36,13 @@ TaskflowSecurityConfigTest {
     @MockitoBean
     private TaskflowUserDetailsService taskflowUserDetailsService;
 
+    // TaskflowSecurityConfig needs both to start; JwtKeyConfig and user.session aren't part of a web slice
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    @MockitoBean
+    private SessionStatus sessionStatus;
+
     @Autowired
     MockMvc mockMvc;
 
@@ -59,6 +67,8 @@ TaskflowSecurityConfigTest {
             ANONYMOUS | POST   | /api/v1/auth/verify-email/resend     | 404
             ANONYMOUS | POST   | /api/v1/auth/password-reset/request  | 404
             ANONYMOUS | POST   | /api/v1/auth/password-reset/confirm  | 404
+            ANONYMOUS | POST   | /api/v1/auth/refresh                 | 404
+            ANONYMOUS | POST   | /api/v1/auth/logout                  | 404
             USER      | POST   | /api/v1/auth/login                   | 404
             ANONYMOUS | GET    | /api/v1/auth/register                | 401
             ANONYMOUS | DELETE | /api/v1/auth/login                   | 401

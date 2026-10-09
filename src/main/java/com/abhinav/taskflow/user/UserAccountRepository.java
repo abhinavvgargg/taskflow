@@ -21,6 +21,10 @@ public interface UserAccountRepository extends JpaRepository<UserAccount, Long> 
     @Query("select u.id from UserAccount u where u.email = :email")
     Optional<Long> findIdByEmail(@Param("email") String email);
 
+    // Change-password re-authenticates by email, which the bearer principal doesn't carry (not in the token: PII)
+    @Query("select u.email from UserAccount u where u.id = :id")
+    Optional<String> findEmailById(@Param("id") Long id);
+
     @Modifying
     @Query("""
             update UserAccount u

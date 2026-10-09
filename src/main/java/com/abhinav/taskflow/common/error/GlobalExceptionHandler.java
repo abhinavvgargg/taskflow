@@ -1,8 +1,6 @@
 package com.abhinav.taskflow.common.error;
 
-import com.abhinav.taskflow.common.logging.CorrelationIdFilter;
 import lombok.extern.slf4j.Slf4j;
-import org.slf4j.MDC;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.*;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -13,11 +11,8 @@ import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
-import java.net.URI;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @Slf4j
 @RestControllerAdvice
@@ -77,13 +72,7 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ResponseEntity<Object> response = super.handleExceptionInternal(ex, body, headers, statusCode, request);
 
         if (response != null && response.getBody() instanceof ProblemDetail problemDetail) {
-            ErrorCode errorCode = resolveErrorCode(ex, statusCode);
-            problemDetail.setProperty("code", errorCode.code());
-            problemDetail.setProperty("timestamp", Instant.now());
-            if (problemDetail.getInstance() == null) {
-                problemDetail.setInstance(URI.create(pathOf(request)));
-            }
-            Optional.ofNullable(MDC.get(CorrelationIdFilter.MDC_KEY)).ifPresent(id -> problemDetail.setProperty("correlationId", id));
+            ProblemDetails.enrich(problemDetail, resolveErrorCode(ex, statusCode), pathOf(request));
         }
         return response;
     }

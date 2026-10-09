@@ -1,5 +1,6 @@
 package com.abhinav.taskflow.organization;
 
+import com.abhinav.taskflow.common.security.SessionStatus;
 import com.abhinav.taskflow.common.security.TaskflowSecurityConfig;
 import com.abhinav.taskflow.common.web.PageableFactory;
 import com.abhinav.taskflow.user.TaskflowUserDetailsService;
@@ -9,6 +10,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -38,6 +40,13 @@ public class OrganizationControllerTest {
 
     @MockitoBean
     private TaskflowUserDetailsService taskflowUserDetailsService;
+
+    // TaskflowSecurityConfig needs both to start; JwtKeyConfig and user.session aren't part of a web slice
+    @MockitoBean
+    private JwtDecoder jwtDecoder;
+
+    @MockitoBean
+    private SessionStatus sessionStatus;
 
     @Test
     void getById_returnsOrganizationJson() throws Exception {

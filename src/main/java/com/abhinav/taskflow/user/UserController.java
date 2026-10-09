@@ -1,6 +1,6 @@
 package com.abhinav.taskflow.user;
 
-import com.abhinav.taskflow.common.security.TaskflowPrincipal;
+import com.abhinav.taskflow.common.security.AuthenticatedUser;
 import com.abhinav.taskflow.common.web.ClientInfo;
 import com.abhinav.taskflow.common.web.PageQuery;
 import com.abhinav.taskflow.common.web.PageResponse;
@@ -26,15 +26,15 @@ public class UserController {
     private final PasswordWorkflow passwordWorkflow;
 
     @GetMapping("/login-history")
-    public ResponseEntity<PageResponse<LoginHistoryResponse>> getLoginHistory(@AuthenticationPrincipal(errorOnInvalidType = true) TaskflowPrincipal taskflowPrincipal, PageQuery pageQuery) {
+    public ResponseEntity<PageResponse<LoginHistoryResponse>> getLoginHistory(@AuthenticationPrincipal(errorOnInvalidType = true) AuthenticatedUser authenticatedUser, PageQuery pageQuery) {
         Pageable pageable = pageableFactory.of(pageQuery.page(), pageQuery.size(), LoginHistoryService.SORT, Set.of("occurredAt", "id"));
-        return ResponseEntity.ok(PageResponse.from(loginHistoryService.getLoginHistory(taskflowPrincipal.getId(), pageable)));
+        return ResponseEntity.ok(PageResponse.from(loginHistoryService.getLoginHistory(authenticatedUser.id(), pageable)));
     }
 
     @PutMapping("/password")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void changePassword(@AuthenticationPrincipal(errorOnInvalidType = true) TaskflowPrincipal taskflowPrincipal,
+    public void changePassword(@AuthenticationPrincipal(errorOnInvalidType = true) AuthenticatedUser authenticatedUser,
                                @Valid @RequestBody ChangePasswordRequest changePasswordRequest, HttpServletRequest request) {
-        passwordWorkflow.changePassword(taskflowPrincipal, changePasswordRequest, ClientInfo.from(request));
+        passwordWorkflow.changePassword(authenticatedUser, changePasswordRequest, ClientInfo.from(request));
     }
 }

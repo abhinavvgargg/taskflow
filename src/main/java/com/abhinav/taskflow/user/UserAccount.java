@@ -1,6 +1,7 @@
 package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.common.persistence.BaseEntity;
+import com.abhinav.taskflow.common.security.UserRole;
 import jakarta.persistence.*;
 import lombok.Getter;
 import org.hibernate.annotations.DynamicUpdate;
