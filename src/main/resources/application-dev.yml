@@ -17,3 +17,7 @@ logging:
 taskflow:
   app:
     frontend-base-url: http://localhost:3000
+  security:
+    cors:
+      allowed-origins:
+        - http://localhost:3000

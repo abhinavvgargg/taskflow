@@ -3,13 +3,13 @@
 > Companion to `../PROJECT_CONTEXT.md` · what Phase 1 built and learned: `../phase-1/PHASE_1_LEARNING_LOG.md` · test patterns: `../phase-0/TESTING_GUIDE.md` and `../phase-1/SECURITY_TESTING_GUIDE.md`. Requirements only, no code (the migration SQL is provided, as agreed). Tick the boxes as you go.
 > **Time-box: 7h, tests included. Hard stop at 10.5h (150%).** The Phase 1 test debt isn't in it (D9: raised again when Phase 2 closes). Anything unfinished becomes a side task in Phase 3.
 
-## ▶ Where we are (resume here) — §2.2 done 2026-10-09, §2.3 next
+## ▶ Where we are (resume here) — §2.3 done 2026-10-11, §2.4 next
 
 | | |
 |---|---|
-| **Done** | Brief (2026-10-01) · decisions D1–D9 (2026-10-02) · **§2.1** keys, sessions, tokens at login (`9b10252`, 2026-10-07; tests skipped, D10) · **§2.2** bearer authentication, Basic removed, JSON 401/403 (2026-10-09; existing tests migrated + 5 new integration tests; §2.2's own test list skipped, D12). §2.2 not yet committed at wrap-up. |
-| **Next** | **Implement §2.3** (refresh: rotation, reuse detection, V6, `Origin` check). Then bring the code for review. Your 15-minute Phase 1 notes are still unwritten. |
-| **Decisions to raise** | None open for §2.3. ⏰ **When Phase 2 closes, remind the user of the test debt:** §1.3–§1.6 (D9), §2.1 (D10), §2.2's list (D12). Before §2.4: `revokeAllExcept` must refuse a null session id. Suite numbers after §2.2 (count, time, containers) weren't reported: measure at the next run. |
+| **Done** | Brief (2026-10-01) · decisions D1–D9 (2026-10-02) · **§2.1** keys, sessions, tokens at login (`9b10252`; tests skipped, D10) · **§2.2** bearer authentication, Basic removed, JSON 401/403 (`9e07cbb`; own test list skipped, D12) · **§2.3** refresh with rotation, reuse detection, `Origin` check, V6 (2026-10-11; reviewed, must-fix applied (D13), run passed in Postman + terminal; tests skipped, D14). §2.3 not yet committed at wrap-up. |
+| **Next** | **Implement §2.4** (logout, log out everywhere, session list, revocation on reset/change). **Must-fix carried into it:** `revokeAllExcept` must refuse a null session id (`id <> NULL` revokes nothing). Then bring the code for review. Your 15-minute Phase 1 notes are still unwritten. |
+| **Decisions to raise** | None open for §2.4. ⏰ **When Phase 2 closes, remind the user of the test debt:** §1.3–§1.6 (D9), §2.1 (D10), §2.2's list (D12), §2.3's list (D14). D9 also noted that §2.4's own integration tests were meant to cover reset and change end to end: with D14's pattern, say plainly at §2.4 that those paths will then have no test at all. Suite numbers (count, time, containers) still unmeasured since Phase 1. |
 | **Carried in** | See *Carried in from Phase 1*: filter-chain 401/403 as `ProblemDetail`, "reject tokens issued before `password_changed_at`" (closed by D5 + D7), §1.7 profile (§2.6), the §1.3–§1.6 tests (D9: deferred, raised at Phase 2's close), OpenAPI (after this phase). |
 | **Environment state** | Dev DB at **V5** (V1–V5 frozen; V6 not yet added). Sessions and refresh tokens exist from the §2.1 runs (e.g. user 1802 `abhinavvgargg-jwt`, session 1952). The dev signing key is **ephemeral**: every restart invalidates access tokens. `pom.xml` has `spring-boot-starter-oauth2-resource-server`. `~/.m2` holds the 6.5.11 sources jars of the three `spring-security-oauth2-*` modules (fetched for verification). |
 | **Numbering** | Decisions are numbered **D1–D9** in this doc; the Decisions table holds them with dates. |
@@ -171,6 +171,8 @@ Each has options, a recommendation, and why the recommendation beats every alter
 | D10 | **§2.1 tests**, decided 2026-10-07 | **Skipped for now; raised with D9 when Phase 2 closes** (your call) | The recommendation was to write them in §2.1 (the agreement lists testing at every phase as must-not-cut). Cost accepted: nothing automated proves the claims set, the cookie attributes, "no session on failed login", or that `prod` without a key refuses to start (the manual `prod` run can be masked by the missing `EmailSender`). §2.2 changes the security config, so those rules have no regression net while it does. |
 | D11 | **Insert-only session entities**, your approach, 2026-10-06 | **Every mutable column of `UserSession` / `RefreshToken` is `updatable = false`; every change is a conditional `@Modifying` update** | Better than the brief, which only said "touch the session with a conditional UPDATE": a stray entity flush **can't** write `revoked_at = NULL` back, so the whole-row resurrection bug (§2.3) is impossible even by mistake. Verified in Hibernate 6.6.53's source: HQL `SET` doesn't check `updatable`, so the bulk updates still write (runtime proof comes with §2.3's tests). |
 | D12 | **§2.2 tests**, decided 2026-10-09 | **The tests §2.2 lists beyond the migration are skipped; raised with D9/D10 when Phase 2 closes** (your call) | Written: the Basic-based tests migrated to bearer logins, and 5 new integration tests (Basic rejected, malformed token 401 + `WWW-Authenticate`, bad token ignored on `/auth/login`, 401 and 403 bodies as `ProblemDetail`). Skipped: the revoked-session 401 (D5's core), the expiry boundary with an adjustable clock, `alg: none` / wrong key / wrong `aud`, the converter's rejections, change-password with a bearer token, no `Set-Cookie` on bearer requests. Cost accepted: §2.3–§2.4 build on the session check with only manual runs proving it. |
+| D13 | **A refresh that finds its session dead undoes the consume**, your approach, 2026-10-11 | **`setRollbackOnly()` on the refresh transaction, then return `SESSION_ENDED`** | Review (2026-10-10) found the bug: the consume committed with the `SESSION_ENDED` rejection, so a client retrying later (lost response, cookie store that ignores clearing) presented a consumed token → a false `REFRESH_TOKEN_REUSED`. My fix was "check the session before consuming"; yours is stronger: it also covers the session being revoked between the lookup and the consume. *Verified* (spring-tx 6.2.19 `AbstractPlatformTransactionManager.commit`): local rollback-only on the outermost transaction rolls back silently. Constraint: `refresh` must run with no caller transaction (nit: `REQUIRES_NEW` would enforce it). |
+| D14 | **§2.3 tests**, decided 2026-10-11 | **Skipped; raised with D9/D10/D12 when Phase 2 closes** (your call; I recommended against: rotation + reuse detection + its race test is on the never-trim list) | Skipped: every `RefreshResult` branch, the grace boundary (superseded vs reused), the 20-way race, the `Origin` check, the dead-session rollback, role changes reaching the token. Cost accepted: the most concurrency-sensitive code in the phase is proven only by manual runs. |
 
 ---
 
@@ -690,7 +692,7 @@ The `detail` is a fixed sentence per code. **Never the exception's message**: th
 
 ---
 
-## 2.3 — Refresh: rotation and reuse detection
+## 2.3 — Refresh: rotation and reuse detection ✅ built 2026-10-11 (tests skipped, D14)
 
 ### What we're building
 
@@ -707,7 +709,7 @@ The `detail` is a fixed sentence per code. **Never the exception's message**: th
 2. Find the token by hash. Not found → *rejected*.
 3. **Conditional consume:** `UPDATE … SET consumed_at = now WHERE id = ? AND consumed_at IS NULL AND expires_at > now`. **1 row** → continue.
 4. **0 rows** → look at the token: expired → *rejected*; consumed **within the grace window** → *superseded* (rejected, **nothing revoked, cookie not cleared**); consumed **before** that → **reuse**: revoke the session (`REFRESH_TOKEN_REUSE`) if it's live, record `REFRESH_TOKEN_REUSED`, *rejected*.
-5. **Touch the session conditionally:** `UPDATE user_sessions SET last_refreshed_at = now WHERE id = ? AND revoked_at IS NULL AND expires_at > now`. 0 rows → the session is dead → *rejected*. (Nothing is thrown, so the consume from step 3 commits too: harmless, the token belonged to a dead session.)
+5. **Touch the session conditionally:** `UPDATE user_sessions SET last_refreshed_at = now WHERE id = ? AND revoked_at IS NULL AND expires_at > now`. 0 rows → the session is dead → mark the transaction **rollback-only** (undoing the consume) and return *rejected*. *(Corrected 2026-10-11, D13: my brief said the committed consume was "harmless"; it wasn't: a later retry of that token would read as theft.)*
 6. Insert the successor token (expiry capped at the session's end) and issue an access token with the same `sid` and the user's **current** username and role.
 
 The workflow (outside the transaction) turns *rejected* into a 401 and *refreshed* into a 200 with a new cookie.
@@ -755,7 +757,7 @@ The workflow (outside the transaction) turns *rejected* into a 401 and *refreshe
 
 #### The migration (V6): you apply it
 
-- [ ] `V6__add_session_security_events.sql` is added exactly as given.
+- [x] `V6__add_session_security_events.sql` is added exactly as given.
 
 ```sql
 -- V4 is applied and frozen: the allowed event types change by replacing the constraint, forward only.
@@ -777,31 +779,31 @@ alter table security_events add constraint ck_security_events_event_type
 
 #### `SecurityEventType`, `SecurityEvent`, `SecurityEventRecorder`
 
-- [ ] The three new types exist, each with its own factory method that takes no failure reason.
-- [ ] The recorder has one method per new type; each joins the caller's transaction.
+- [x] The three new types exist, each with its own factory method that takes no failure reason.
+- [x] The recorder has one method per new type; each joins the caller's transaction.
 
 #### `SessionService.refresh` (`user.session`)
 
-- [ ] It's `@Transactional` and returns a result: *refreshed* (new raw refresh token, session id, account id) or *rejected* (with whether to clear the cookie).
-- [ ] It follows steps 1–6 above, in that order.
-- [ ] It never throws for an expected rejection.
-- [ ] Reuse revokes the session with reason `REFRESH_TOKEN_REUSE` and records `REFRESH_TOKEN_REUSED` with the presenter's client info, both in this transaction.
-- [ ] *Superseded* asks the caller **not** to clear the cookie; every other rejection asks it to clear the cookie.
-- [ ] The successor's expiry is the earlier of now + idle lifetime and the session's `expires_at`.
+- [x] It's `@Transactional` and returns a result: *refreshed* (new raw refresh token, session id, account id) or *rejected* (with whether to clear the cookie).
+- [x] It follows steps 1–6 above, in that order.
+- [x] It never throws for an expected rejection.
+- [x] Reuse revokes the session with reason `REFRESH_TOKEN_REUSE` and records `REFRESH_TOKEN_REUSED` with the presenter's client info, both in this transaction.
+- [x] *Superseded* asks the caller **not** to clear the cookie; every other rejection asks it to clear the cookie.
+- [x] The successor's expiry is the earlier of now + idle lifetime and the session's `expires_at`.
 
 **Done when:** the same cookie used twice, 11 s apart, gives 200 then 401, the session shows `REFRESH_TOKEN_REUSE`, and the second 401 cleared the cookie.
 
 #### `AllowedOrigins` (web layer, `common/security`)
 
-- [ ] It answers whether an `Origin` header value is in the configured allowed origins (§2.5's property).
-- [ ] A request with **no** `Origin` header is allowed (non-browser clients don't send one).
+- [x] It answers whether an `Origin` header value is in the configured allowed origins (§2.5's property).
+- [x] A request with **no** `Origin` header is allowed (non-browser clients don't send one).
 
 #### `AuthController.refresh` (via a workflow bean)
 
-- [ ] An `Origin` that isn't allowed → 403 `ORIGIN_NOT_ALLOWED`, before any token is read.
-- [ ] *Refreshed* → 200 with the new access token and the rotated cookie.
-- [ ] *Rejected* → 401 `INVALID_REFRESH_TOKEN`, clearing the cookie unless superseded.
-- [ ] A missing cookie → 401 `INVALID_REFRESH_TOKEN`.
+- [x] An `Origin` that isn't allowed → 403 `ORIGIN_NOT_ALLOWED`, before any token is read.
+- [x] *Refreshed* → 200 with the new access token and the rotated cookie.
+- [x] *Rejected* → 401 `INVALID_REFRESH_TOKEN`, clearing the cookie unless superseded.
+- [x] A missing cookie → 401 `INVALID_REFRESH_TOKEN`.
 
 | Method | Path | Request | Success | Errors |
 |---|---|---|---|---|
@@ -840,7 +842,7 @@ alter table security_events add constraint ck_security_events_event_type
 5. The `Origin` check. → *Deliberate failure 6.*
 6. The race. → *Deliberate failure 1.*
 
-### Tests
+### Tests ⏭️ skipped 2026-10-11 (D14); the list stays for later
 
 | Kind | Must prove |
 |---|---|
@@ -1180,7 +1182,7 @@ A browser frontend on an allowed origin (dev: `http://localhost:3000`) can call 
 - [ ] `created_by` = the username for bearer-authenticated writes.
 - [ ] No access token, refresh token, email or password in the logs at INFO.
 - [ ] Suite green; the Basic-based tests are migrated, not disabled.
-- [ ] ⏰ **D9 + D10 + D12 raised:** the §1.3–§1.6, §2.1 and §2.2 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
+- [ ] ⏰ **D9 + D10 + D12 + D14 raised:** the §1.3–§1.6, §2.1, §2.2 and §2.3 test debt is scheduled (Phase 3's start, or a catch-up block) and recorded.
 - [ ] README updated: login, refresh, logout, the cookie, bearer usage with curl (`-c`/`-b` jar), and that Basic is gone.
 - [ ] `PROJECT_CONTEXT.md` §5's Phase 2 row matches what was built (D1).
 - [ ] Small commits, about one per sub-section, staged by file name.

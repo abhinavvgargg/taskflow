@@ -65,6 +65,21 @@ public class SecurityEvent extends IdentifiedEntity {
         return new SecurityEvent(SecurityEventType.PASSWORD_CHANGED, userAccountId, ipAddress, userAgent, null, occurredAt);
     }
 
+    /** §2.4: one session revoked from the session list (not a plain logout of this device: that isn't recorded). */
+    public static SecurityEvent sessionRevoked (Long userAccountId, InetAddress ipAddress, String userAgent, Instant occurredAt) {
+        return new SecurityEvent(SecurityEventType.SESSION_REVOKED, userAccountId, ipAddress, userAgent, null, occurredAt);
+    }
+
+    /** §2.4: "log out everywhere". */
+    public static SecurityEvent allSessionsRevoked (Long userAccountId, InetAddress ipAddress, String userAgent, Instant occurredAt) {
+        return new SecurityEvent(SecurityEventType.ALL_SESSIONS_REVOKED, userAccountId, ipAddress, userAgent, null, occurredAt);
+    }
+
+    /** §2.3: an already-consumed refresh token was presented again: an attack signal. The IP is the presenter's. */
+    public static SecurityEvent refreshTokenReused (Long userAccountId, InetAddress ipAddress, String userAgent, Instant occurredAt) {
+        return new SecurityEvent(SecurityEventType.REFRESH_TOKEN_REUSED, userAccountId, ipAddress, userAgent, null, occurredAt);
+    }
+
     @Override
     public String toString() {
         return "SecurityEvent{" +

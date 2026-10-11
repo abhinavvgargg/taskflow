@@ -1,6 +1,8 @@
 package com.abhinav.taskflow.user;
 
+import com.abhinav.taskflow.common.error.ProblemDetails;
 import com.abhinav.taskflow.common.web.ClientInfo;
+import com.abhinav.taskflow.user.session.SessionErrorCode;
 import com.abhinav.taskflow.user.token.ResendVerificationRequest;
 import com.abhinav.taskflow.user.token.VerifyTokenRequest;
 import jakarta.servlet.http.HttpServletRequest;
@@ -22,6 +24,9 @@ public class AuthController {
     private final LoginService loginService;
     private final PasswordWorkflow passwordWorkflow;
     private final RefreshCookie refreshCookie;
+    private final SessionWorkflow sessionWorkflow;
+
+    private static final String INVALID_REFRESH_TOKEN_DETAIL = "The refresh token is invalid or has expired. Sign in again.";
 
     @PostMapping("/register")
     public ResponseEntity<UserAccountResponse> registerUserAccount (@Valid @RequestBody RegisterRequest registerRequest) {
@@ -49,6 +54,30 @@ public class AuthController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.SET_COOKIE, cookie.toString())
                 .body(LoginResponse.from(result));
+    }
+
+    /**
+     * Rotates the refresh cookie and returns a new access token. No body: the credential is the cookie.
+     * A rejection is answered here rather than thrown, because it needs a Set-Cookie header (clearing the cookie)
+     * that an exception handler wouldn't add.
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh (HttpServletRequest request) {
+        RefreshOutcome outcome = sessionWorkflow.refresh(request.getHeader(HttpHeaders.ORIGIN), refreshCookie.read(request), ClientInfo.from(request));
+
+        return switch (outcome) {
+            case RefreshOutcome.Granted granted -> ResponseEntity.ok()
+                    .header(HttpHeaders.SET_COOKIE, refreshCookie.set(granted.refreshToken(), granted.refreshTokenMaxAge()).toString())
+                    .body(RefreshResponse.from(granted.accessToken()));
+            case RefreshOutcome.Denied denied -> {
+                ResponseEntity.BodyBuilder response = ResponseEntity.status(SessionErrorCode.INVALID_REFRESH_TOKEN.status());
+                if (denied.clearCookie()) {
+                    response.header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString());
+                }
+                yield response.body(ProblemDetails.create(SessionErrorCode.INVALID_REFRESH_TOKEN, SessionErrorCode.INVALID_REFRESH_TOKEN.status(),
+                        INVALID_REFRESH_TOKEN_DETAIL, request.getRequestURI()));
+            }
+        };
     }
 
     @PostMapping("/password-reset/request")

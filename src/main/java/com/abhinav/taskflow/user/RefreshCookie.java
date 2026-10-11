@@ -1,9 +1,13 @@
 package com.abhinav.taskflow.user;
 
 import com.abhinav.taskflow.user.session.SessionProperties;
+import jakarta.annotation.Nullable;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseCookie;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.WebUtils;
 
 import java.time.Duration;
 
@@ -21,6 +25,12 @@ public class RefreshCookie {
     // §2.3 / §2.4: same name, path and attributes, or the browser treats it as a different cookie and keeps the old one
     public ResponseCookie clear() {
         return base("").maxAge(Duration.ZERO).build();
+    }
+
+    /** The raw refresh token the browser sent, or null when there's no such cookie. */
+    public @Nullable String read(HttpServletRequest request) {
+        Cookie cookie = WebUtils.getCookie(request, sessionProperties.cookie().name());
+        return cookie == null ? null : cookie.getValue();
     }
 
     private ResponseCookie.ResponseCookieBuilder base(String value) {

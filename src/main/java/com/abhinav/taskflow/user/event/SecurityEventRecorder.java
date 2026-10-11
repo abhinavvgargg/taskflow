@@ -3,6 +3,7 @@ package com.abhinav.taskflow.user.event;
 import com.abhinav.taskflow.common.web.ClientInfo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -42,5 +43,24 @@ public class SecurityEventRecorder {
     @Transactional
     public void recordPasswordChanged (Long userAccountId, ClientInfo clientInfo) {
         securityEventRepository.save(SecurityEvent.passwordChanged(userAccountId, clientInfo.inetAddress(), clientInfo.userAgent(), clock.instant()));
+    }
+
+    // The three session events below are MANDATORY, not REQUIRED: each one must commit together with the revocation it
+    // describes (a record commits with what it records). Called outside a transaction, they fail loudly instead of
+    // quietly committing on their own.
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordSessionRevoked (Long userAccountId, ClientInfo clientInfo) {
+        securityEventRepository.save(SecurityEvent.sessionRevoked(userAccountId, clientInfo.inetAddress(), clientInfo.userAgent(), clock.instant()));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordAllSessionsRevoked (Long userAccountId, ClientInfo clientInfo) {
+        securityEventRepository.save(SecurityEvent.allSessionsRevoked(userAccountId, clientInfo.inetAddress(), clientInfo.userAgent(), clock.instant()));
+    }
+
+    @Transactional(propagation = Propagation.MANDATORY)
+    public void recordRefreshTokenReused (Long userAccountId, ClientInfo clientInfo) {
+        securityEventRepository.save(SecurityEvent.refreshTokenReused(userAccountId, clientInfo.inetAddress(), clientInfo.userAgent(), clock.instant()));
     }
 }

@@ -2,7 +2,8 @@
 
 > Organised by **theme**, not by sub-section (rule since 2026-10-01). Sub-section detail (briefs, requirements, per-step deliberate failures, test plans) lives in `PHASE_2_REQUIREMENTS.md`.
 > Companions: `../phase-1/PHASE_1_LEARNING_LOG.md` (the identity this phase builds on) · `../phase-1/SECURITY_TESTING_GUIDE.md`.
-> **Covers:** §2.1 (2026-10-07) · §2.2 (2026-10-09). Updated after every sub-section.
+> **Covers:** §2.1 (2026-10-07) · §2.2 (2026-10-09) · §2.3 (2026-10-11). Updated after every sub-section.
+> The rebuild recipe (what, how, rules) is your `PHASE_2_IMPLEMENTATION_REFERENCE.md`; the theory is `JWT_AND_SESSIONS_GUIDE.md`.
 
 ---
 
@@ -17,11 +18,13 @@
 | **Bearer authentication** | Resource server with our own decoder: RS256 only; validators = timestamps (injected `Clock`, 5 s skew) + **`exp` required** + issuer + audience, through `createDefaultWithValidators`. `SessionJwtConverter` (not a bean) parses `sub`/`sid`/`preferred_username`/`role` strictly, then asks `SessionStatus` (one boolean query) → `TaskflowAuthenticationToken` with an `AuthenticatedUser`. The resolver ignores `/api/v1/auth/**`. **Basic deleted.** | `JwtKeyConfig#jwtDecoder`, `SessionJwtConverter`, `SessionStatus` / `JpaSessionStatus`, `TaskflowAuthenticationToken`, `AuthenticatedUser`, `TaskflowBearerTokenResolver`, `TaskflowSecurityConfig` |
 | **JSON 401/403** | Entry point (both in `oauth2ResourceServer` and `exceptionHandling`) and access-denied handler write `ProblemDetail` directly (no `/error` dispatch): `AUTHENTICATION_REQUIRED` 401 + `WWW-Authenticate: Bearer`, `INVALID_ACCESS_TOKEN` 401 (400 for several tokens) + `error="…"` only, `ACCESS_DENIED` 403. Fixed details, never exception messages. | `ProblemAuthenticationEntryPoint`, `ProblemAccessDeniedHandler`, `ProblemResponseWriter`, `ProblemDetails` (shared with `GlobalExceptionHandler`) |
 | **Principal readers** | Auditor, `UserController`, `changePassword` (email loaded by id) read `AuthenticatedUser`; the lockout listener still reacts only to `TaskflowPrincipal`. `UserRole` moved to `common/security`. | `AuditAwareImpl`, `PasswordWorkflow`, `UserAccountRepository#findEmailById`, `AuthenticationEventsListener` |
+| **Refresh** | `POST /auth/refresh` with the cookie: shape check → find by hash → **conditional consume** → on 0 rows classify (expired · consumed within 10 s = superseded, cookie untouched · consumed earlier = reuse: revoke the session + `REFRESH_TOKEN_REUSED`, committed) → **conditional touch** (dead session → rollback-only, so the token isn't burnt) → current username and role → successor capped at the session's end. Returns sealed results; never throws for an expected rejection. One client code, `INVALID_REFRESH_TOKEN`. | `SessionService#refresh`, `RefreshResult`, `SessionWorkflow`, `RefreshOutcome`, `RefreshResponse`, `AuthController#refresh`, `RefreshCookie#read`, `AccountClaims`, `SessionErrorCode` |
+| **`Origin` check + events** | Refresh (and §2.4's logout) refuse a present, non-allowed `Origin` with 403 `ORIGIN_NOT_ALLOWED` before the cookie is read; absent `Origin` is allowed. V6 adds three event types; their recorder methods are `MANDATORY`. | `AllowedOrigins`, `CorsProperties` (§2.5 will reuse it), `RequestForbiddenException`, V6, `SecurityEventRecorder` |
 | **Client IP parsing** | Moved from `SecurityEventRecorder` into `ClientInfo.inetAddress()`, shared by events and sessions. | `ClientInfo` |
 
-**Not yet built:** §2.3–§2.6 (no refresh yet: after an access token expires or the dev key changes, the client must log in again). **Tests:** none for §2.1 (D10); for §2.2 only the migration and 5 integration tests (D12).
+**Not yet built:** §2.4–§2.6. **Tests:** none for §2.1 (D10) or §2.3 (D14); for §2.2 only the migration and 5 integration tests (D12).
 
-**Commits:** `9b10252` (§2.1) · §2.2 not yet committed at wrap-up.
+**Commits:** `9b10252` (§2.1) · `9e07cbb` (§2.2) · §2.3 not yet committed at wrap-up.
 
 ### Evidence
 
@@ -31,6 +34,8 @@
 | **Reported by you** | Login body and cookie; the decoded token (header `kid ephemeral-…`, `RS256`; claims as agreed, `exp − iat = 900`, no email); no session on a wrong password or an unverified login; the ephemeral-key `WARN`; deliberate failures 1–4 "working as expected" (details, and which error the `prod` run showed, not sent) |
 | **Reported by you (§2.2, 2026-10-09)** | All 14 rows of the run table "working as expected": bearer 200 · no token / Basic → 401 `AUTHENTICATION_REQUIRED` · `createdBy` = username · 403 `ACCESS_DENIED` bodies · expired token (1-min TTL) → 401 · `alg: none` → 401 · session revoked by SQL → 401 at once · expired header ignored on `/auth/login` · change-password with a bearer token · login history · restart → 401 · deliberate failures 1–5 · suite green (count, time and containers **not reported**) |
 | **Verified by me (§2.2 review)** | `createDefaultWithValidators` varargs exists and skips its default timestamp validator when it finds yours at the top level · `JwtTimestampValidator` passes a token with **no** `exp` · `Jackson2ObjectMapperBuilder` adds Spring's `ProblemDetail` mixin · `withPublicKey(...)` uses a `SingleKeyJWSKeySelector` (the `kid` isn't consulted) |
+| **Reported by you (§2.3, 2026-10-11)** | Every row of the Postman/terminal run "working as expected": rotation (old consumed, new live, `last_refreshed_at` moved) · old token after 10 s → 401 + clearing cookie, session `REFRESH_TOKEN_REUSE`, event, the winner's token and access token dead · **20-way race: one 200, no 500** · two at once: one 200, one 401 without `Set-Cookie` · foreign `Origin` → 403, token unconsumed · no cookie → 401 · expired → 401, no event · **revoked session refreshed twice → no consume, no false reuse event (D13)** · role change reaches the next token · deliberate failures 2–6 |
+| **Verified by me (§2.3 review)** | `AbstractPlatformTransactionManager.commit` (spring-tx 6.2.19): local rollback-only on the outermost transaction → silent rollback, no exception |
 | **Not proven** | That `prod` without a key refuses to start **because of the key** (the missing `EmailSender` may fail first); D5's revoked-session 401 and the expiry boundary by any automated test |
 
 ---
@@ -52,6 +57,8 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 - **D12** §2.2's own test list skipped (migration + 5 integration tests written); raised with D9/D10.
 - **Converter not a bean** *(your call, §2.2)*: Boot adds every `Converter` bean to MVC's conversion service.
 - **`exp` required by an explicit validator** *(your call, §2.2; my brief missed the gap)*.
+- **D13** *(your approach, better than my fix)* A refresh that finds its session dead marks the transaction rollback-only: the token isn't burnt, also when the session dies between lookup and consume.
+- **D14** §2.3 tests skipped (I recommended against).
 - **D11** *(your approach, better than the brief)* Insert-only session entities: mutable columns `updatable = false`, changes only by conditional bulk updates.
 - `CookieSettings` naming in the doc (deliberate, 2026-10-07).
 
@@ -70,6 +77,24 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 - **An ephemeral key is per process:** a restart (or a second instance) invalidates every access token. Fine for dev, never for prod.
 - **The signature is checked first; nothing else runs on a token it rejects.** An unexpired token is valid until `exp` *and only while the server holds the key that signed it* *(seen: row 12, a restart → 401)*. `withPublicKey(...)` uses a `SingleKeyJWSKeySelector`, so the `kid` header isn't even consulted *(verified)*. Changing the key revokes every access token at once; a leaked private key is the worst case.
 - **A token with no `exp` passes the timestamp validator** *(verified; caught by your code, missed by my brief)*. Require `exp` explicitly.
+
+### Rotation, reuse and concurrency
+
+- **One conditional `UPDATE`, branch on the row count** decides the single winner of N concurrent refreshes *(seen: 20 parallel → one 200, no 500)*. The losers' `UPDATE`s wait on the winner's row lock, then re-check `consumed_at IS NULL` against the committed row and match nothing (PostgreSQL's documented READ COMMITTED behaviour).
+- **After losing, re-read with a scalar query**: the entity loaded before the race still says `consumedAt = null`.
+- **The grace window is measured from `consumed_at`**, and a loser's "now" can be *earlier* than the winner's `consumed_at`: still inside the window.
+- **Expired ≠ reused.** Only a consumed token signals theft.
+- **A detection that must survive its own failure response is returned, not thrown**: an exception inside `@Transactional` rolls back the revocation and the event *(deliberate failure 2, seen)*.
+- **Every write that a rejection leaves behind must be judged** *(caught in review, D13)*: the committed consume of a dead session's token turned a client's later retry into a false theft signal. `setRollbackOnly()` + return undoes it without an exception, **but only in the outermost transaction**: inside a caller's transaction the mark spreads and the caller's commit throws `UnexpectedRollbackException` *(verified in spring-tx)*. My brief had called that consume "harmless".
+- **The loser must not clear the winner's cookie** *(deliberate failure 4, seen)*.
+- **`MANDATORY` on event methods that must commit with a revocation** makes a missing transaction loud.
+
+### Cookie endpoints and `Origin`
+
+- **`SameSite=Strict` stops other sites, not sibling subdomains**: the `Origin` check closes that. Check it **before** reading the cookie, so a foreign page can't burn the token *(seen: 403, token unconsumed)*.
+- **Absent `Origin` is allowed** (non-browser clients send none; CSRF needs a browser, which always sends it on a cross-origin POST).
+- **A rejection that must set a header is built in the controller**, not thrown: an exception handler wouldn't add the clearing `Set-Cookie`.
+- **Postman's cookie jar can't tell old from new tokens**: send `Cookie: name={{var}}` yourself with the jar disabled, and confirm in the Console that exactly one cookie went out *(your setup, 2026-10-11)*. Concurrency needs a terminal: the runner is sequential.
 
 ### Keys and configuration
 
@@ -134,6 +159,9 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 | Per-request session check after all token checks, errors not caught | Revoked sessions still working; DB queries for garbage tokens; outages reported as 401 |
 | One `ProblemDetail` factory for MVC and the filter chain; fixed details; entry point set in both places | Two error shapes; JWT parse messages leaking; half the 401s with Spring's body |
 | Resolver ignores `/api/v1/auth/**` | A stale token locking a client out of login and refresh |
+| Conditional consume + scalar re-read + partial unique index; grace from `consumed_at` | Two winners; a forked family; the multi-tab wake-up logging users out |
+| Reuse detection returned (committed) not thrown; `MANDATORY` events; rollback-only for a dead session | Detection that forgets itself; events without their revocation; false theft signals |
+| `Origin` checked first; one error code for every refresh failure; clearing cookie except when superseded | Sibling-subdomain CSRF; an oracle for thieves; the loser deleting the winner's cookie |
 
 ---
 
@@ -158,7 +186,13 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 15. **401 vs 403, and `WWW-Authenticate`?** Unidentified (with `Bearer` / `error="invalid_token"` so the client knows to refresh or log in) vs identified and refused.
 16. **Your custom validator could have accepted expired tokens. How?** `setJwtValidator` replaces the defaults; and a token with no `exp` passes the timestamp check.
 
-**Not answerable yet:** the multi-tab refresh race (§2.3) · CORS vs CSRF in practice (§2.3/§2.5) · log out everywhere, demonstrated (§2.4).
+17. **Two tabs refresh at the same moment with one cookie. What happens?** Row lock → one winner; the loser re-reads `consumed_at`, sees it milliseconds old → superseded: 401 without touching the cookie; nothing revoked.
+18. **How does rotation catch a stolen refresh token?** Whoever presents a consumed token after the grace window proves a copy exists; the server can't tell which copy is the thief's, so the whole session dies, and the event is recorded.
+19. **Why does the reuse branch return instead of throwing?** The revocation and event must commit with the 401.
+20. **Cookies bring CSRF back. How are refresh and logout protected?** `SameSite=Strict`, `Path=/api/v1/auth`, and an `Origin` allow-list checked before the cookie is read.
+21. **A refresh found its session revoked. Why did you roll back instead of just rejecting?** A committed consume would make the client's later retry look like theft.
+
+**Not answerable yet:** log out everywhere, demonstrated (§2.4) · CORS preflights in practice (§2.5).
 
 ---
 
@@ -193,15 +227,17 @@ update user_sessions set revoked_at = now(), revoke_reason = 'LOGOUT' where id =
 
 **Seen in §2.2** (reported 2026-10-09, "working as expected"): #1 audience-only validator → expired token accepted · #2 resolver without the `/auth/**` rule → login 401 with a stale header · #3 entry point in one place → empty 401 body · #4 `@AuthenticationPrincipal TaskflowPrincipal` → 500 · #5 auditor on the old type → `created_by = system` · #6 `alg: none` → 401 · #7 restart → 401 · #8 session revoked by SQL → 401 at once.
 
+**Seen in §2.3** (reported 2026-10-11, "working as expected"): #1 check-then-act consume, 20 parallel → several 200s then a 500 · #2 throw from the reuse branch → session still live, no event · #3 grace 0, two at once → winner logged out · #4 superseded clears the cookie → empty jar · #5 entity touch → blocked by `updatable = false` (D11) · #6 foreign `Origin` → 403, nothing consumed.
+
 **Verified by me:** a `Secure` cookie survives a curl jar over plain HTTP; `HttpOnly` lines hidden by `grep -v '^#'` *(hit)*.
 
-**Mutation checks:** none (D10, D12).
+**Mutation checks:** none (D10, D12, D14).
 
 ---
 
 ## 8. Carried debt
 
-**Tests owed:** §1.3–§1.6 (D9) · **§2.1** (D10; including the `ApplicationContextRunner` check that `prod` refuses to start without a key) · **§2.2** beyond the migration (D12: revoked-session 401, expiry boundary, `alg: none` / wrong key / wrong `aud`, converter rejections, change-password with bearer, no `Set-Cookie`). All raised when Phase 2 closes.
+**Tests owed:** §1.3–§1.6 (D9) · **§2.1** (D10; including the `ApplicationContextRunner` check that `prod` refuses to start without a key) · **§2.3** (D14: every refresh branch, grace boundary, the race, `Origin`, the dead-session rollback, role changes) · **§2.2** beyond the migration (D12: revoked-session 401, expiry boundary, `alg: none` / wrong key / wrong `aud`, converter rejections, change-password with bearer, no `Set-Cookie`). All raised when Phase 2 closes.
 
 **Measurements owed:** suite count, time and container count after §2.2 (Phase 1 ended at 76 tests, 2 containers) · the per-request session lookup's plan with real rows (expect the primary key).
 
@@ -213,6 +249,7 @@ update user_sessions set revoked_at = now(), revoke_reason = 'LOGOUT' where id =
 - `revokeAll` / `revokeAllExcept` lack the `expiresAt > :now` condition that `revoke` / `revokeOwned` have; pick one rule.
 - An orphan session (with a refresh token nobody holds) if token issuing throws after `start()`: accepted.
 - Single-line PEM in env vars: Phase 11.
+- *(§2.3)* `findAccountClaims`' comment claims a rollback that (before D13) didn't happen: reword it · `CorsProperties` accepts uppercase hosts and default ports that browsers never send (silent mismatch) · refresh's 401 has no `WWW-Authenticate` (no standard cookie scheme; defensible) · `refresh` relies on having no caller transaction (`REQUIRES_NEW` would enforce it).
 - *(§2.2)* `TestLogins.accessTokenFor` uses a raw `Map` · `JwtKeyConfig` now builds the decoder too (`JwtConfig`?) · `ProblemDetails` uses `Instant.now()`, not the `Clock` · the carried `catch (Exception e)` + `instanceof` in `changePassword`.
 
 **Scheduled elsewhere:** Phase 9 cleanup job (expired sessions, consumed refresh tokens) · Phase 10 rate limiting on login/refresh · Phase 11 key loading from orchestrator secrets.

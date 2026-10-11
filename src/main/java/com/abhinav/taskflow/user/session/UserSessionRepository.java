@@ -9,6 +9,7 @@ import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.Instant;
+import java.util.Optional;
 
 @Repository
 public interface UserSessionRepository extends JpaRepository<UserSession, Long> {
@@ -25,6 +26,11 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
     boolean isLive(@Param("sessionId") Long sessionId,
                    @Param("userAccountId") Long userAccountId,
                    @Param("now") Instant now);
+
+    // Refresh re-reads the CURRENT username and role inside its transaction (a projection, no UserAccount entity),
+    // so a missing account rolls the rotation back instead of failing after the new cookie was committed
+    @Query("select new com.abhinav.taskflow.user.session.AccountClaims(u.username, u.role) from UserAccount u where u.id = :userAccountId")
+    Optional<AccountClaims> findAccountClaims(@Param("userAccountId") Long userAccountId);
 
     @Modifying(flushAutomatically = true)
     @Query("""
