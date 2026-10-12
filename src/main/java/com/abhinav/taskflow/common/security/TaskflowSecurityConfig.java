@@ -23,7 +23,8 @@ public class TaskflowSecurityConfig {
 
     @Bean
     SecurityFilterChain taskflowSecurityFilterChain(HttpSecurity http, JwtDecoder jwtDecoder, SessionStatus sessionStatus,
-                                                    BearerTokenResolver bearerTokenResolver, ObjectMapper objectMapper) throws Exception
+                                                    BearerTokenResolver bearerTokenResolver, ObjectMapper objectMapper,
+                                                    CorsProperties corsProperties) throws Exception
     {
         ProblemResponseWriter problemWriter = new ProblemResponseWriter(objectMapper);
         // One instance, set in BOTH places below: the bearer filter holds its own entry point (token presented and
@@ -39,6 +40,11 @@ public class TaskflowSecurityConfig {
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/v1/**").authenticated()
                         .anyRequest().denyAll())
+                // CORS inside the security chain: its CorsFilter answers preflights (OPTIONS, which carry no credentials)
+                // BEFORE authentication and authorization; CORS configured only in Spring MVC would come too late, and
+                // every preflight would hit authenticated() and fail with 401. The source is passed explicitly, not
+                // looked up by bean name.
+                .cors(cors -> cors.configurationSource(TaskflowCorsConfiguration.source(corsProperties)))
                 .oauth2ResourceServer(resourceServer -> resourceServer
                         .bearerTokenResolver(bearerTokenResolver)
                         .authenticationEntryPoint(entryPoint)

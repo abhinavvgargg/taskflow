@@ -80,6 +80,19 @@ public class AuthController {
         };
     }
 
+    /**
+     * Logs out THIS device: revokes the session the refresh cookie belongs to. Always 204 and always clears the cookie,
+     * also for a missing, stale or unknown cookie (idempotent: a double-click or a dead session is still "logged out").
+     * Only a disallowed Origin fails (403), before anything is read or cleared.
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout (HttpServletRequest request) {
+        sessionWorkflow.logout(request.getHeader(HttpHeaders.ORIGIN), refreshCookie.read(request));
+        return ResponseEntity.noContent()
+                .header(HttpHeaders.SET_COOKIE, refreshCookie.clear().toString())
+                .build();
+    }
+
     @PostMapping("/password-reset/request")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public void requestPasswordReset (@Valid @RequestBody PasswordResetRequest passwordResetRequest) {

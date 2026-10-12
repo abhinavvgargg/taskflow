@@ -7,9 +7,14 @@ import com.abhinav.taskflow.user.session.RefreshResult.Refreshed;
 import com.abhinav.taskflow.user.session.RefreshResult.Rejected;
 import com.abhinav.taskflow.user.token.TokenCodec;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.interceptor.TransactionAspectSupport;
+import org.springframework.util.Assert;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -19,6 +24,9 @@ import java.util.Optional;
 @Service
 @RequiredArgsConstructor
 public class SessionService {
+
+    /** Sort for the session list: most recently active first, newest id as the tiebreaker (stable pages). */
+    public static final Sort LIST_SORT = Sort.by(Sort.Order.desc("lastRefreshedAt"), Sort.Order.desc("id"));
 
     private final UserSessionRepository userSessionRepository;
     private final RefreshTokenRepository refreshTokenRepository;
@@ -141,6 +149,85 @@ public class SessionService {
     private RefreshResult sessionEndedUndoingConsume() {
         TransactionAspectSupport.currentTransactionStatus().setRollbackOnly();
         return new Rejected(Reason.SESSION_ENDED);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // §2.4: revocation and listing. Every revocation is ONE conditional UPDATE (no entity is loaded), and each one
+    // requires "not revoked yet", so a second revocation changes nothing and the first reason is kept.
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Logout: revokes the session the refresh cookie belongs to, whatever the token's own state (an old, consumed
+     * cookie still ends its family). Unknown, malformed or missing tokens do nothing: logout always succeeds.
+     * No event: a plain logout of this device isn't security-relevant, and the session row already records it.
+     *
+     * @return whether a live session was revoked (for the log; the client always gets 204)
+     */
+    @Transactional
+    public boolean revokeByRefreshToken(String rawToken, Instant now) {
+        if (!tokenCodec.isWellFormed(rawToken)) {
+            return false;
+        }
+        Instant at = now.truncatedTo(ChronoUnit.MICROS);
+        return refreshTokenRepository.findSessionIdByTokenHash(tokenCodec.hash(rawToken))
+                .map(sessionId -> userSessionRepository.revoke(sessionId, SessionRevokeReason.LOGOUT, at) == 1)
+                .orElse(false);
+    }
+
+    /**
+     * Revokes one of the caller's sessions, chosen from the session list. The account id is in the UPDATE's WHERE
+     * clause: someone else's session id matches no row, exactly like an id that doesn't exist (IDOR by construction).
+     *
+     * @return whether a row was revoked; false means "not found" to the caller (unknown, not yours, or already ended)
+     */
+    @Transactional
+    public boolean revokeOne(Long userAccountId, Long sessionId, ClientInfo clientInfo, Instant now) {
+        Instant at = now.truncatedTo(ChronoUnit.MICROS);
+        if (userSessionRepository.revokeOwned(sessionId, userAccountId, SessionRevokeReason.REVOKED_BY_USER, at) == 0) {
+            return false;
+        }
+        securityEventRecorder.recordSessionRevoked(userAccountId, clientInfo);
+        return true;
+    }
+
+    /**
+     * "Log out everywhere": the panic button. Revokes every live session of the account, INCLUDING the caller's own
+     * (a user who presses it suspects compromise; sparing this device would be a guess that it's clean).
+     * The event is recorded once, in the same transaction as the revocation.
+     */
+    @Transactional
+    public int logOutEverywhere(Long userAccountId, ClientInfo clientInfo, Instant now) {
+        int revoked = userSessionRepository.revokeAll(userAccountId, SessionRevokeReason.LOGOUT_ALL, now.truncatedTo(ChronoUnit.MICROS));
+        securityEventRecorder.recordAllSessionsRevoked(userAccountId, clientInfo);
+        return revoked;
+    }
+
+    /**
+     * Revokes every session of the account, for a password reset. MANDATORY: it must commit with the password change
+     * that causes it, or not at all; called outside a transaction it throws instead of committing on its own.
+     * (Callers must go through the Spring proxy: a call via {@code this} would skip the MANDATORY check.)
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public int revokeAll(Long userAccountId, SessionRevokeReason reason, Instant now) {
+        return userSessionRepository.revokeAll(userAccountId, reason, now.truncatedTo(ChronoUnit.MICROS));
+    }
+
+    /**
+     * Revokes every session of the account except one, for a password change (the session that proved the current
+     * password keeps working). MANDATORY, like {@link #revokeAll}.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    public int revokeAllExcept(Long userAccountId, Long exceptSessionId, SessionRevokeReason reason, Instant now) {
+        // "id <> NULL" is UNKNOWN in SQL, never true: a null here would silently revoke nothing at all
+        Assert.notNull(exceptSessionId, "exceptSessionId must not be null");
+        return userSessionRepository.revokeAllExcept(userAccountId, exceptSessionId, reason, now.truncatedTo(ChronoUnit.MICROS));
+    }
+
+    /** The caller's live sessions (not revoked, not past their absolute end), marking the one making this request. */
+    @Transactional(readOnly = true)
+    public Page<SessionResponse> listLive(Long userAccountId, Long currentSessionId, Pageable pageable, Instant now) {
+        return userSessionRepository.findLive(userAccountId, now.truncatedTo(ChronoUnit.MICROS), pageable)
+                .map(summary -> SessionResponse.from(summary, currentSessionId));
     }
 
     /** The earlier of now + idle lifetime and the session's absolute end. */

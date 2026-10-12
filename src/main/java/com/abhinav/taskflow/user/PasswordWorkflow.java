@@ -69,7 +69,7 @@ public class PasswordWorkflow {
             throw e;
         }
 
-        AccountContact accountContact = passwordService.applyChange(authenticatedUser.id(), changePasswordRequest.newPassword(),  clientInfo);
+        AccountContact accountContact = passwordService.applyChange(authenticatedUser.id(), authenticatedUser.sessionId(), changePasswordRequest.newPassword(), clientInfo);
         accountEmails.sendPasswordChangedEmail(accountContact.accountId(), accountContact.email());
     }
 }

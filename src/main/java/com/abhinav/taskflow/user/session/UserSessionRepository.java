@@ -98,6 +98,8 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
                         @Param("reason") SessionRevokeReason reason,
                         @Param("now") Instant now);
 
+    // The order comes from the Pageable (SessionService.LIST_SORT, through PageableFactory like every other list):
+    // PageableFactory always adds a sort, and an ORDER BY here as well would be applied twice
     @Query(value = """
             select new com.abhinav.taskflow.user.session.SessionSummary(
                        s.id, s.createdAt, s.lastRefreshedAt, s.expiresAt, s.ipAddress, s.userAgent)
@@ -105,7 +107,6 @@ public interface UserSessionRepository extends JpaRepository<UserSession, Long> 
              where s.userAccountId = :userAccountId
                and s.revokedAt is null
                and s.expiresAt > :now
-             order by s.lastRefreshedAt desc, s.id desc
             """,
             countQuery = """
             select count(s)

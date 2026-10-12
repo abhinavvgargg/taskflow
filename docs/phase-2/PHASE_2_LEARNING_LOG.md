@@ -2,7 +2,7 @@
 
 > Organised by **theme**, not by sub-section (rule since 2026-10-01). Sub-section detail (briefs, requirements, per-step deliberate failures, test plans) lives in `PHASE_2_REQUIREMENTS.md`.
 > Companions: `../phase-1/PHASE_1_LEARNING_LOG.md` (the identity this phase builds on) · `../phase-1/SECURITY_TESTING_GUIDE.md`.
-> **Covers:** §2.1 (2026-10-07) · §2.2 (2026-10-09) · §2.3 (2026-10-11). Updated after every sub-section.
+> **Phase closed 2026-10-12.** Covers §2.1 (2026-10-07) · §2.2 (2026-10-09) · §2.3 (2026-10-11) · §2.4 + §2.5 (2026-10-12). §2.6 profile moved to Phase 3 (D17).
 > The rebuild recipe (what, how, rules) is your `PHASE_2_IMPLEMENTATION_REFERENCE.md`; the theory is `JWT_AND_SESSIONS_GUIDE.md`.
 
 ---
@@ -20,11 +20,14 @@
 | **Principal readers** | Auditor, `UserController`, `changePassword` (email loaded by id) read `AuthenticatedUser`; the lockout listener still reacts only to `TaskflowPrincipal`. `UserRole` moved to `common/security`. | `AuditAwareImpl`, `PasswordWorkflow`, `UserAccountRepository#findEmailById`, `AuthenticationEventsListener` |
 | **Refresh** | `POST /auth/refresh` with the cookie: shape check → find by hash → **conditional consume** → on 0 rows classify (expired · consumed within 10 s = superseded, cookie untouched · consumed earlier = reuse: revoke the session + `REFRESH_TOKEN_REUSED`, committed) → **conditional touch** (dead session → rollback-only, so the token isn't burnt) → current username and role → successor capped at the session's end. Returns sealed results; never throws for an expected rejection. One client code, `INVALID_REFRESH_TOKEN`. | `SessionService#refresh`, `RefreshResult`, `SessionWorkflow`, `RefreshOutcome`, `RefreshResponse`, `AuthController#refresh`, `RefreshCookie#read`, `AccountClaims`, `SessionErrorCode` |
 | **`Origin` check + events** | Refresh (and §2.4's logout) refuse a present, non-allowed `Origin` with 403 `ORIGIN_NOT_ALLOWED` before the cookie is read; absent `Origin` is allowed. V6 adds three event types; their recorder methods are `MANDATORY`. | `AllowedOrigins`, `CorsProperties` (§2.5 will reuse it), `RequestForbiddenException`, V6, `SecurityEventRecorder` |
+| **Logout and sessions** | `POST /auth/logout` (cookie + `Origin`; always 204, clears the cookie; revokes the cookie's session, no event) · `GET /users/me/sessions` (live sessions, `current` flag, IP as a literal, sorted through `PageableFactory`) · `DELETE /users/me/sessions/{id}` (owner in the `WHERE`; every miss the same 404; `SESSION_REVOKED`) · `DELETE /users/me/sessions` (all, this one included; `ALL_SESSIONS_REVOKED`) | `SessionService` (`revokeByRefreshToken`, `revokeOne`, `logOutEverywhere`, `listLive`), `SessionController`, `SessionResponse`, `SessionWorkflow`, `AuthController#logout` |
+| **Revocation on password events** | Reset → `revokeAll(PASSWORD_RESET)`; change → `revokeAllExcept(current sid, PASSWORD_CHANGED)`; both `MANDATORY`, inside the password transaction; `revokeAllExcept` asserts a non-null id | `SessionService#revokeAll/#revokeAllExcept`, `PasswordService`, `PasswordWorkflow` |
+| **CORS** | In the security chain, source passed explicitly (not a bean): `/api/v1/auth/**` first with credentials, `/api/v1/**` without; exact origins from `CorsProperties`; exposes `X-Correlation-Id`, `Location`, `WWW-Authenticate` | `TaskflowCorsConfiguration`, `TaskflowSecurityConfig` |
 | **Client IP parsing** | Moved from `SecurityEventRecorder` into `ClientInfo.inetAddress()`, shared by events and sessions. | `ClientInfo` |
 
-**Not yet built:** §2.4–§2.6. **Tests:** none for §2.1 (D10) or §2.3 (D14); for §2.2 only the migration and 5 integration tests (D12).
+**Not built:** §2.6 profile (moved to Phase 3, D17). **Tests:** §2.2's migration + 5 integration tests only; nothing for §2.1, §2.3, §2.4, §2.5 (D10, D12, D14, D16).
 
-**Commits:** `9b10252` (§2.1) · `9e07cbb` (§2.2) · §2.3 not yet committed at wrap-up.
+**Commits:** `9b10252` (§2.1) · `9e07cbb` (§2.2) · `34c15f2` (§2.3) · §2.4 + §2.5 not yet committed at phase close.
 
 ### Evidence
 
@@ -36,7 +39,8 @@
 | **Verified by me (§2.2 review)** | `createDefaultWithValidators` varargs exists and skips its default timestamp validator when it finds yours at the top level · `JwtTimestampValidator` passes a token with **no** `exp` · `Jackson2ObjectMapperBuilder` adds Spring's `ProblemDetail` mixin · `withPublicKey(...)` uses a `SingleKeyJWSKeySelector` (the `kid` isn't consulted) |
 | **Reported by you (§2.3, 2026-10-11)** | Every row of the Postman/terminal run "working as expected": rotation (old consumed, new live, `last_refreshed_at` moved) · old token after 10 s → 401 + clearing cookie, session `REFRESH_TOKEN_REUSE`, event, the winner's token and access token dead · **20-way race: one 200, no 500** · two at once: one 200, one 401 without `Set-Cookie` · foreign `Origin` → 403, token unconsumed · no cookie → 401 · expired → 401, no event · **revoked session refreshed twice → no consume, no false reuse event (D13)** · role change reaches the next token · deliberate failures 2–6 |
 | **Verified by me (§2.3 review)** | `AbstractPlatformTransactionManager.commit` (spring-tx 6.2.19): local rollback-only on the outermost transaction → silent rollback, no exception |
-| **Not proven** | That `prod` without a key refuses to start **because of the key** (the missing `EmailSender` may fail first); D5's revoked-session 401 and the expiry boundary by any automated test |
+| **Verified by me (§2.4 + §2.5, 2026-10-12)** | Run in full on a **scratch copy + scratch database** (your dev DB untouched; scratch DB dropped): two devices listed with `current` · revoke-one → that device 401 + refresh 401, `REVOKED_BY_USER`, one `SESSION_REVOKED` · repeat / random id / **another user's id → three byte-identical 404s** (bar timestamp, correlation id, path), the other session still live · trailing-slash `DELETE` → 404, nothing revoked · revoking your own session clears the cookie · log out everywhere → both devices 401 + refresh 401, `LOGOUT_ALL`, exactly one event · logout → 204, `LOGOUT`, no event, idempotent, no cookie → 204 · change → own session works, the other `PASSWORD_CHANGED` · reset → every session `PASSWORD_RESET`, none live · CORS preflight table (credentials only on `/auth/**`, foreign origin 403) · foreign `Origin` on logout/refresh → plain-text `403 Invalid CORS request`, nothing revoked or consumed · **suite 83/83, 12 s wall, 2 Postgres containers** (Phase 1 ended at 76 / 2) · `CorsFilter` behaviour in spring-web 6.2.19 sources |
+| **Not proven** | That `prod` without a key refuses to start **because of the key** (the missing `EmailSender` may fail first) · a wrong-`aud` token (never exercised) · anything in §2.1, §2.3–§2.5 by an automated test |
 
 ---
 
@@ -59,6 +63,9 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 - **`exp` required by an explicit validator** *(your call, §2.2; my brief missed the gap)*.
 - **D13** *(your approach, better than my fix)* A refresh that finds its session dead marks the transaction rollback-only: the token isn't burnt, also when the session dies between lookup and consume.
 - **D14** §2.3 tests skipped (I recommended against).
+- **D15** A disallowed cross-origin request gets Spring's plain-text CORS 403: accepted (browsers can't read it; `AllowedOrigins` stays as the backstop).
+- **D16** §2.4/§2.5 tests not written: the phase closed without them at your instruction.
+- **D17** §2.6 profile moved to Phase 3 as a side task.
 - **D11** *(your approach, better than the brief)* Insert-only session entities: mutable columns `updatable = false`, changes only by conditional bulk updates.
 - `CookieSettings` naming in the doc (deliberate, 2026-10-07).
 
@@ -95,6 +102,26 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 - **Absent `Origin` is allowed** (non-browser clients send none; CSRF needs a browser, which always sends it on a cross-origin POST).
 - **A rejection that must set a header is built in the controller**, not thrown: an exception handler wouldn't add the clearing `Set-Cookie`.
 - **Postman's cookie jar can't tell old from new tokens**: send `Cookie: name={{var}}` yourself with the jar disabled, and confirm in the Console that exactly one cookie went out *(your setup, 2026-10-11)*. Concurrency needs a terminal: the runner is sequential.
+
+### Revocation and session management
+
+- **Revocation is one row, so every way of ending a login is one conditional `UPDATE`**, and "not revoked yet" in its `WHERE` keeps the first reason on a second revocation.
+- **Put the owner in the `WHERE`, and answer every miss with the same 404** *(deliberate failure 1, seen: without it, alice logged bob's device out)*. Ids from a global sequence are guessable; a 403 would confirm they exist.
+- **Revocation commits in the password's transaction or not at all** *(deliberate failure 2, seen: moved to a separate step, the reset committed, the step failed with `IllegalTransactionStateException` (`MANDATORY`), the client got a 500, and the old session kept working with the new password set)*.
+- **An assert turns SQL's silent `NULL` into a loud failure** *(deliberate failure 4, seen: null sid → 500 and the whole change rolled back, instead of "changed, nothing revoked")*.
+- **Cookie identity is name + domain + path** *(deliberate failure 3, seen: a clearing cookie with `Path=/` left the real one in the jar)*; a response from `/users/me/...` may clear a cookie whose `Path` is `/api/v1/auth`.
+- **Logout uses the cookie, not the bearer token**, so it works after the access token expires; it's idempotent (always 204).
+- **Spring Framework 6 doesn't match a trailing slash**: `DELETE /users/me/sessions/` is a 404, not "delete all" *(seen)*.
+- **A fixed `ORDER BY` plus a Pageable sort sorts twice**: keep the order in one place (`PageableFactory`).
+
+### CORS
+
+- **CORS must run inside the security chain** *(deliberate failure 1 of §2.5, seen: without `http.cors`, the preflight got 401 `WWW-Authenticate: Bearer`)*.
+- **`CorsFilter` also rejects disallowed *actual* requests**, not just preflights: plain-text `403 Invalid CORS request`, before any of our code *(verified in spring-web 6.2.19; seen on refresh and logout)*. Same-origin requests aren't CORS requests and pass through.
+- **First registration wins** *(§2.5 #2, seen: `/api/v1/**` first → the refresh preflight lost `Allow-Credentials`)*.
+- **Validate origins at startup** *(§2.5 #3, seen: `*` → "APPLICATION FAILED TO START", naming `allowedOrigins[0]`)*.
+- **A browser can't read a failed CORS response**, so the error format of a CORS rejection matters only to curl-style callers (D15).
+- **`getHostAddress()` prints IPv6 in full** (`0:0:0:0:0:0:0:1` for `::1`): cosmetic.
 
 ### Keys and configuration
 
@@ -162,6 +189,9 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 | Conditional consume + scalar re-read + partial unique index; grace from `consumed_at` | Two winners; a forked family; the multi-tab wake-up logging users out |
 | Reuse detection returned (committed) not thrown; `MANDATORY` events; rollback-only for a dead session | Detection that forgets itself; events without their revocation; false theft signals |
 | `Origin` checked first; one error code for every refresh failure; clearing cookie except when superseded | Sibling-subdomain CSRF; an oracle for thieves; the loser deleting the winner's cookie |
+| Owner in the `WHERE`; one 404 for every miss; owner from the principal, never the URL | IDOR; confirming that guessed ids exist |
+| Revocation inside the password transaction, `MANDATORY`; `Assert.notNull` before a `<>` | "Password changed, attacker still in"; silent no-op revocations |
+| CORS in the chain, explicit source, narrow pattern first, exact validated origins, credentials only on `/auth/**` | Preflight 401s; CORS silently off; the cookie dropped; any website reading responses |
 
 ---
 
@@ -192,7 +222,13 @@ Dated, with alternatives, in `PHASE_2_REQUIREMENTS.md`'s Decisions table. One li
 20. **Cookies bring CSRF back. How are refresh and logout protected?** `SameSite=Strict`, `Path=/api/v1/auth`, and an `Origin` allow-list checked before the cookie is read.
 21. **A refresh found its session revoked. Why did you roll back instead of just rejecting?** A committed consume would make the client's later retry look like theft.
 
-**Not answerable yet:** log out everywhere, demonstrated (§2.4) · CORS preflights in practice (§2.5).
+22. **A user presses "log out everywhere". What happens to the attacker's access token?** Its session row is revoked in one `UPDATE`; the next request's session check fails → 401; refresh fails too.
+23. **Why 404, not 403, for someone else's session id?** Ids are guessable; a 403 confirms existence. The owner is in the `WHERE`, so it's one code path.
+24. **How do you make sure a password reset logs the attacker out?** The revocation runs in the reset's transaction (`MANDATORY`); a separate step can fail after the password committed (seen).
+25. **Why must CORS be configured in the security chain?** Preflights carry no credentials; otherwise they hit `authenticated()` and get 401.
+26. **CORS vs CSRF?** CORS controls whether a script may *read* a cross-origin response (and send credentials); CSRF is a forged request riding on a cookie the browser attaches. SameSite + `Origin` handle CSRF here; CORS doesn't.
+
+**Not answerable yet:** timing of login vs unknown email (unmeasured, Phase 1) · the per-request session lookup's plan at scale (unmeasured).
 
 ---
 
@@ -209,6 +245,10 @@ python3 -c 'import sys,base64,json;[print(json.dumps(json.loads(base64.urlsafe_b
 curl -s -i -H "Authorization: Bearer $T" localhost:8080/api/v1/organizations
 # an alg:none token claiming ADMIN (must be 401)
 python3 -c 'import base64,json;e=lambda o:base64.urlsafe_b64encode(json.dumps(o).encode()).rstrip(b"=").decode();print(e({"alg":"none","typ":"JWT"})+"."+e({"sub":"1802","sid":"1952","preferred_username":"x","role":"ADMIN","iss":"taskflow","aud":"taskflow-api","exp":4102444800})+".")'
+# verify a change WITHOUT touching your dev DB: scratch copy + scratch database (what the 2026-10-12 run did)
+rsync -a --exclude target --exclude .idea --exclude .git ./ /tmp/tf-scratch/ && docker exec taskflow-postgres psql -U taskflow -d taskflow -c 'create database taskflow_scratch'
+(cd /tmp/tf-scratch && ./mvnw -q -DskipTests -Dmaven.gitcommitid.skip=true spring-boot:run -Dspring-boot.run.arguments="--server.port=18080 --spring.datasource.url=jdbc:postgresql://localhost:5432/taskflow_scratch")
+docker exec taskflow-postgres psql -U taskflow -d taskflow -c 'drop database taskflow_scratch'   # afterwards
 # prod without a key (needs the DB variables; the missing EmailSender may fail first)
 DB_HOST=localhost DB_PORT=5432 DB_NAME=taskflow DB_USER=taskflow DB_PASSWORD=taskflow_local_dev FRONTEND_BASE_URL=http://localhost:3000 ./mvnw spring-boot:run -Dspring-boot.run.profiles=prod
 ```
@@ -229,27 +269,71 @@ update user_sessions set revoked_at = now(), revoke_reason = 'LOGOUT' where id =
 
 **Seen in §2.3** (reported 2026-10-11, "working as expected"): #1 check-then-act consume, 20 parallel → several 200s then a 500 · #2 throw from the reuse branch → session still live, no event · #3 grace 0, two at once → winner logged out · #4 superseded clears the cookie → empty jar · #5 entity touch → blocked by `updatable = false` (D11) · #6 foreign `Origin` → 403, nothing consumed.
 
+**Seen in §2.4 + §2.5** (ran by me on the scratch copy, 2026-10-12): §2.4 #1 no owner in the query → another user's device logged out (204, their next request 401) · #2 revocation as a separate step after the reset → 500 (`IllegalTransactionStateException`, `MANDATORY`), the password changed, the old session still 200 · #3 clearing cookie with `Path=/` → the jar keeps the real cookie · #4 null sid → **500 and full rollback** (the assert; silent no-op without it) · §2.5 #1 no `http.cors` → preflight 401 · #2 registrations swapped → refresh preflight without `Allow-Credentials` · #3 `*` → startup refused.
+
 **Verified by me:** a `Secure` cookie survives a curl jar over plain HTTP; `HttpOnly` lines hidden by `grep -v '^#'` *(hit)*.
 
-**Mutation checks:** none (D10, D12, D14).
+**Mutation checks:** none (D10, D12, D14, D16).
 
 ---
 
-## 8. Carried debt
+## 8. Backlog at phase close (2026-10-12): everything still owed
 
-**Tests owed:** §1.3–§1.6 (D9) · **§2.1** (D10; including the `ApplicationContextRunner` check that `prod` refuses to start without a key) · **§2.3** (D14: every refresh branch, grace boundary, the race, `Origin`, the dead-session rollback, role changes) · **§2.2** beyond the migration (D12: revoked-session 401, expiry boundary, `alg: none` / wrong key / wrong `aud`, converter rejections, change-password with bearer, no `Set-Cookie`). All raised when Phase 2 closes.
+### A. Test debt (⏰ raised now: scheduling is your call)
 
-**Measurements owed:** suite count, time and container count after §2.2 (Phase 1 ended at 76 tests, 2 containers) · the per-request session lookup's plan with real rows (expect the primary key).
+| Owed | What the tests must prove | Decision |
+|---|---|---|
+| §1.3 registration | Duplicate email/username 409 with the field, also under a race; validation 400 never echoes the password | D9 |
+| §1.4 verification | Token single use (conditional `UPDATE`), purpose-bound, expiry, resend always 202, revoke on reissue | D9 |
+| §1.5 login, lockout, history | **The rollback trap** (counter survives a failed login); 5 → locked → correct password still 401; unlock after the duration (adjustable `Clock`); identical bodies for unknown/wrong/locked | D9 |
+| §1.6 reset, change | Reset single use under a 20-way race; unknown email 202 with no email; change counts wrong guesses; reset unlocks + verifies | D9 |
+| §2.1 tokens at login | Claims (no email), `exp` exact, cookie attributes, `no-store`, no session on failure, **`prod` without a key refuses to start** (`ApplicationContextRunner`) | D10 |
+| §2.2 bearer | **Revoked session → 401** (D5's core), expiry boundary, `alg: none` / wrong key / **wrong `aud`**, converter rejections, change-password with bearer | D12 |
+| §2.3 refresh | Every `RefreshResult` branch, grace boundary, **the 20-way race**, `Origin`, dead-session rollback (no false reuse), role change | D14 |
+| §2.4 sessions | IDOR 404, revoke-one/all, logout idempotent, **reset and change revoke the right sessions**, trailing slash | D16 |
+| §2.5 CORS | `CorsProperties` rejects `*`/path/slash/empty; the preflight table; credentials only on `/auth/**` | D16 |
 
-**Before §2.4:** `revokeAllExcept` must refuse a null session id (`id <> NULL` revokes nothing).
+Plus: Phase 0's "never echo `rejectedValue`" test, and **mutation checks for all of it** (none since §1.2). Reset and change currently have **no automated test at all**.
 
-**Nits from the §2.1 review:**
-- `// NEW` markers in `LoginService`.
-- The ephemeral-key check should also require `prod` to be absent.
-- `revokeAll` / `revokeAllExcept` lack the `expiresAt > :now` condition that `revoke` / `revokeOwned` have; pick one rule.
-- An orphan session (with a refresh token nobody holds) if token issuing throws after `start()`: accepted.
-- Single-line PEM in env vars: Phase 11.
-- *(§2.3)* `findAccountClaims`' comment claims a rollback that (before D13) didn't happen: reword it · `CorsProperties` accepts uppercase hosts and default ports that browsers never send (silent mismatch) · refresh's 401 has no `WWW-Authenticate` (no standard cookie scheme; defensible) · `refresh` relies on having no caller transaction (`REQUIRES_NEW` would enforce it).
-- *(§2.2)* `TestLogins.accessTokenFor` uses a raw `Map` · `JwtKeyConfig` now builds the decoder too (`JwtConfig`?) · `ProblemDetails` uses `Instant.now()`, not the `Clock` · the carried `catch (Exception e)` + `instanceof` in `changePassword`.
+### B. Open Definition-of-done items
 
-**Scheduled elsewhere:** Phase 9 cleanup job (expired sessions, consumed refresh tokens) · Phase 10 rate limiting on login/refresh · Phase 11 key loading from orchestrator secrets.
+- **`prod` without a signing key refuses to start**: implemented, never proven (the missing `EmailSender` may fail first). The `ApplicationContextRunner` test above closes it.
+- **README**: still describes HTTP Basic (6 mentions). Needs login, refresh, logout, the cookie, bearer usage, curl jars, Postman notes.
+
+### C. Measurements owed
+
+- Login timing, known vs unknown email (Phase 1) · bcrypt cost 10 vs 12 (Phase 1) · the §1.3 registration race (Phase 1) · the per-request session lookup's plan with real rows (expect the primary key).
+- *Measured 2026-10-12:* suite 83 tests, 12 s, 2 containers.
+
+### D. Process
+
+- **Commit §2.4 + §2.5** (uncommitted at close).
+- **Your 15-minute notes** for Phase 1 and Phase 2 (both templates still empty).
+- **OpenAPI** (was "after Phase 2": now due): `/v3/api-docs` and `/swagger-ui` permitted in dev only, bearer scheme documented once.
+
+### E. Nits, still open in the code (checked 2026-10-12)
+
+- `LoginService`: three `// NEW` markers.
+- `JwtKeyConfig`: the ephemeral key is chosen for "`dev` or `test`"; it should also require `prod` to be absent. The class now builds the decoder too (`JwtConfig`?).
+- `UserSessionRepository`: `revokeAll` / `revokeAllExcept` lack the `expiresAt > :now` condition the other revokes have.
+- `SessionService.refresh`: relies on having no caller transaction for its rollback-only undo (`REQUIRES_NEW` would enforce it).
+- `CorsProperties`: accepts uppercase hosts and default ports that browsers never send (silent mismatch).
+- `ProblemDetails`: `Instant.now()` instead of the `Clock`.
+- `PasswordWorkflow.changePassword`: `catch (Exception e)` + `instanceof` (carried from Phase 1).
+- `TestLogins.accessTokenFor`: raw `Map`.
+- Refresh's 401 has no `WWW-Authenticate` (no standard cookie scheme; defensible).
+- An orphan session if token issuing throws after `start()` (accepted).
+- Phase 1 leftovers: unused `setRole` / `setTimezone` in `UserAccount`; the 403 detail "Email Not Verified"; `markEmailVerified` overwrites; the duplicated `uk_user_tokens_active` literal; no `/forgot-password` link in the "password changed" email; the CSRF/TRACE comment nits; `Organization`'s public no-arg constructor.
+- *Closed:* `findAccountClaims`' comment is accurate since D13; the null-sid debt (asserted).
+
+### F. Scheduled in later phases
+
+- **Phase 3:** §1.7/§2.6 profile (side task, D17).
+- **Phase 9:** async email sending (removes most timing leaks) · a real prod `EmailSender` (**prod refuses to start until then**) · the cleanup job (expired tokens and sessions, consumed refresh tokens, 12-month-old events).
+- **Phase 10:** rate limiting (login, refresh, reset/resend email bombing, lockout DoS).
+- **Phase 11:** forwarded headers behind a proxy · keys from orchestrator secrets (single-line PEM) · the profile-less deploy running as `dev` (`spring.profiles.active: dev` default).
+- **Not built, by design (Phase 2's "Explicitly NOT"):** JWKS endpoint, multi-key verification, emailing the owner on reuse, a per-user session cap, DPoP, JWE.
+
+### G. Project backlog (`PROJECT_CONTEXT.md` §6, unchanged)
+
+Phase 10 API keys (committed) · bulk operations · attachments · CSV export · email change (design written) · saved filters, dashboards, issue links, custom fields, invitation emails, sprints, SLA, notification preferences.

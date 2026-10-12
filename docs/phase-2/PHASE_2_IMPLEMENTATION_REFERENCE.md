@@ -8,10 +8,10 @@
 |---|---|---|
 | §2.1 | Keys, access tokens, sessions + refresh tokens, login with a cookie | ✅ covered (code committed: `9b10252`) |
 | §2.2 | Bearer authentication on every request, JSON 401/403, Basic removed | ✅ covered (code committed: `9e07cbb`) |
-| §2.3 | Refresh with rotation and reuse detection, `Origin` check | ✅ covered (built, reviewed, run passed 2026-10-11; **not yet committed**; tests skipped, D14) |
-| §2.4 | Logout, log out everywhere, session list, revocation on password events | ⏳ not built |
-| §2.5 | CORS | ⏳ not built (`CorsProperties` already exists, from §2.3) |
-| §2.6 | Profile (carried from §1.7) | ⏳ not built |
+| §2.3 | Refresh with rotation and reuse detection, `Origin` check | ✅ covered (code committed: `34c15f2`; run passed 2026-10-11; tests skipped, D14) |
+| §2.4 | Logout, log out everywhere, session list, revocation on password events | ✅ covered (run passed in full 2026-10-12 on a scratch copy, incl. deliberate failures 1–4; **not yet committed**; tests not written, D16) |
+| §2.5 | CORS | ✅ covered (run passed 2026-10-12, incl. deliberate failures 1–3; **not yet committed**; tests not written, D16) |
+| §2.6 | Profile (carried from §1.7) | ⏭️ moved to Phase 3 (D17) |
 
 **Stack this was built on:** Java 21 · Spring Boot 3.5.16 · Spring Security 6.5.11 (resource server + Nimbus JOSE) · Hibernate 6.6 · PostgreSQL 17 · Flyway.
 
@@ -32,6 +32,9 @@
   - [C8. Refresh: rotation and reuse detection (§2.3)](#c8-refresh-rotation-and-reuse-detection-23)
   - [C9. The `Origin` check on cookie endpoints (§2.3)](#c9-the-origin-check-on-cookie-endpoints-23)
   - [C10. Security events added by Phase 2 (§2.3)](#c10-security-events-added-by-phase-2-23)
+  - [C11. Logout, the session list, revoke one, log out everywhere (§2.4)](#c11-logout-the-session-list-revoke-one-log-out-everywhere-24)
+  - [C12. Revocation on password reset and change (§2.4)](#c12-revocation-on-password-reset-and-change-24)
+  - [C13. CORS (§2.5)](#c13-cors-25)
 - [Part D — Rebuilding this in another project: the recipe](#part-d--rebuilding-this-in-another-project-the-recipe)
 - [Part E — Quick reference: endpoints, errors, configuration](#part-e--quick-reference-endpoints-errors-configuration)
 - [Part F — Framework behaviour we relied on (checked in the sources)](#part-f--framework-behaviour-we-relied-on-checked-in-the-sources)
@@ -121,11 +124,12 @@ common/security                                   user/session                  
 ───────────────                                   ────────────                         ────
 JwtProperties, CorsProperties                     SessionProperties                    LoginService (+ LoginResult, LoginResponse)
 JwtKeyConfig ─► JwtSigningKey, JwtEncoder,        UserSession, RefreshToken            SessionWorkflow (+ RefreshOutcome, RefreshResponse)
-                JwtDecoder                        UserSessionRepository                AuthController (/login, /refresh)
-AccessTokenIssuer, IssuedAccessToken,             RefreshTokenRepository               RefreshCookie
-  TaskflowClaims                                  SessionService (start, refresh)      PasswordWorkflow, UserController,
-SessionJwtConverter ─► SessionStatus (interface)  JpaSessionStatus (implements it)       AuthenticationEventsListener
-AuthenticatedUser, TaskflowAuthenticationToken    StartedSession, RefreshResult,
+                JwtDecoder                        UserSessionRepository                AuthController (/login, /refresh, /logout)
+AccessTokenIssuer, IssuedAccessToken,             RefreshTokenRepository               SessionController (/users/me/sessions)
+  TaskflowClaims                                  SessionService (start, refresh,      RefreshCookie
+                                                    revoke…, listLive)                 PasswordWorkflow, PasswordService,
+SessionJwtConverter ─► SessionStatus (interface)  JpaSessionStatus (implements it)       UserController, AuthenticationEventsListener
+AuthenticatedUser, TaskflowAuthenticationToken    StartedSession, RefreshResult, SessionResponse,
 TaskflowBearerTokenResolver, AllowedOrigins         AccountClaims, SessionSummary
 ProblemAuthenticationEntryPoint,                  SessionRevokeReason, SessionErrorCode
   ProblemAccessDeniedHandler, ProblemResponseWriter
@@ -148,7 +152,7 @@ AccessTokenIssuer.issue(…, sid, now)   current username + role, from the loade
 
 **Every API request** (§2.2)
 ```
-CorrelationIdFilter → … → BearerTokenAuthenticationFilter
+CorrelationIdFilter → … → CorsFilter (preflight answered here; disallowed origin → 403) → BearerTokenAuthenticationFilter
   resolver: "Bearer <token>" from the header (nothing under /api/v1/auth/**)
   JwtDecoder: signature (RS256 only) → validators (exp/nbf with Clock + 5 s skew, exp present, iss, aud)
   SessionJwtConverter: sub, sid, preferred_username, role → SessionStatus.isLive(sid, sub) → TaskflowAuthenticationToken
@@ -167,9 +171,14 @@ SessionService.refresh (one transaction, returns a result):
 Workflow: sign the access token → controller: 200 + new cookie | 401 (+ clearing cookie unless superseded)
 ```
 
-**Revocation** (by §2.4; today only by reuse detection or by hand in SQL)
+**Revocation** (§2.4; also reuse detection in §2.3)
 ```
-UPDATE user_sessions SET revoked_at = now, revoke_reason = ? WHERE … AND revoked_at IS NULL
+POST /auth/logout (cookie + Origin)        → the cookie's session            LOGOUT            no event
+DELETE /users/me/sessions/{id} (bearer)    → that session, if yours and live REVOKED_BY_USER   SESSION_REVOKED
+DELETE /users/me/sessions (bearer)         → all your sessions, this one too LOGOUT_ALL        ALL_SESSIONS_REVOKED
+password reset (inside its transaction)    → all your sessions               PASSWORD_RESET    (PASSWORD_RESET already)
+password change (inside its transaction)   → all except the current sid      PASSWORD_CHANGED  (PASSWORD_CHANGED already)
+each one: UPDATE user_sessions SET revoked_at = now, revoke_reason = ? WHERE … AND revoked_at IS NULL
 → refresh tokens of that session stop working (step 5) → access tokens stop working (SessionStatus)
 ```
 
@@ -465,6 +474,7 @@ Around it:
 - A missing `Origin` is allowed: curl, mobile apps and server clients don't send it, and CSRF needs a browser, which always does. Rejecting it breaks clients and stops nothing.
 - Exact string comparison only (no `startsWith`); the literal `null` sent by sandboxed pages is refused.
 - No CSRF tokens: for two endpoints that `SameSite` plus `Origin` already protect, they'd add a second token for the client to fetch and echo.
+- **Since §2.5, the CORS filter answers first** (C13): a *cross-origin* request from a disallowed origin is rejected by Spring's `CorsFilter` with a plain-text `403 Invalid CORS request` before it reaches `AllowedOrigins`. `AllowedOrigins` stays as the second layer: it still refuses a same-origin request whose `Origin` isn't listed (the CORS filter ignores same-origin requests), and it keeps the cookie endpoints protected if the CORS configuration is ever removed or loosened.
 
 **Files.** `common/security/CorsProperties`, `AllowedOrigins`; `common/error/RequestForbiddenException`; `user/SessionWorkflow`; `application-{dev,prod}.yml`, `src/test/resources/application-test.yml`.
 
@@ -482,6 +492,100 @@ Around it:
 - A reuse event records the **presenter's** IP and user agent, often the attacker's.
 
 **Files.** `db/migration/V6__add_session_security_events.sql`; `user/event/SecurityEventType`, `SecurityEvent`, `SecurityEventRecorder`.
+
+---
+
+### C11. Logout, the session list, revoke one, log out everywhere (§2.4)
+
+**What it does.** Lets a user end **this** session, **one** chosen session, or **all** of them, and see which sessions exist. Every one takes effect on the next request, because every access token is checked against its session (A3).
+
+**How it's built.**
+
+| Action | Endpoint | Authenticated by | `SessionService` method | Revokes | Event | Cookie |
+|---|---|---|---|---|---|---|
+| Log out this device | `POST /api/v1/auth/logout` | the refresh **cookie** + `Origin` check | `revokeByRefreshToken(raw, now)`: shape check → `findSessionIdByTokenHash` (an id, no entity) → `revoke(sid, LOGOUT)` | the cookie's session, whatever the token's state | none | always cleared |
+| List my sessions | `GET /api/v1/users/me/sessions?page&size` | bearer | `listLive(accountId, currentSid, pageable, now)` → `findLive` projection → `SessionResponse` with `current` | — | — | — |
+| End one session | `DELETE /api/v1/users/me/sessions/{id}` | bearer | `revokeOne(accountId, sid, client, now)` → `revokeOwned` (owner in the `WHERE`) → event | that session, if yours and live | `SESSION_REVOKED` | cleared if it's the current one |
+| Log out everywhere | `DELETE /api/v1/users/me/sessions` | bearer | `logOutEverywhere(accountId, client, now)` → `revokeAll(LOGOUT_ALL)` → event once | all your live sessions, **this one included** | `ALL_SESSIONS_REVOKED` | always cleared |
+
+- `SessionWorkflow` (not transactional) reads the clock once per call, applies the `Origin` check to logout, and turns "nothing revoked" into `404 SESSION_NOT_FOUND` **after** `revokeOne`'s transaction (which wrote nothing) is over.
+- `SessionController` (`/api/v1/users/me/sessions`) takes the owner from `@AuthenticationPrincipal AuthenticatedUser`; no endpoint takes an account id.
+- `SessionResponse {id, createdAt, lastRefreshedAt, expiresAt, ipAddress, userAgent, current}`: the IP as a plain literal (`getHostAddress()`); `toString()` hides IP and user agent.
+- The list's order (`lastRefreshedAt desc, id desc`) is `SessionService.LIST_SORT`, passed through `PageableFactory` like every other list; the query itself has no `ORDER BY` (the factory always adds a sort, so an `ORDER BY` in the query would be applied twice).
+
+**Rules.**
+- **Logout reads the cookie, not the bearer token**, so it works after 15 idle minutes without a refresh first, and it lives under `/api/v1/auth/**` like refresh.
+- **Logout is always 204 and always clears the cookie**: idempotent for a double-click, a dead session, a garbage or missing cookie. Only a disallowed `Origin` fails (403), before anything is read or cleared.
+- **The owner is in the `WHERE` clause** (`id = ? AND user_account_id = ?`): someone else's session id matches no row. It's a **404 identical to a random id's**, never a 403, because session ids come from a guessable global sequence (IDOR by construction).
+- **Session operations live under `/users/me/sessions`, not `/auth`**: they need the bearer token, which §2.2's resolver ignores under `/auth`.
+- **Clearing the cookie from `/users/me/...` names the cookie's own `Path` (`/api/v1/auth`)**: a response may set a cookie for any path, and the browser only deletes a cookie whose name and path match.
+- **"Log out everywhere" includes this device**: it's the panic button; a user who presses it suspects compromise.
+- **No event for a plain logout**; events for revoking from the list and for log-out-everywhere (security-relevant), in the same transaction (`MANDATORY` recorder methods).
+- No Spring `.logout()` / `LogoutFilter`: built for server sessions, it redirects (302) to `/login?logout` and runs before the rules.
+
+**Pitfalls.**
+- Looking the session up by id and checking the owner in Java: a later refactor forgets the check (deliberate failure 1).
+- A clearing cookie with another `Path` leaves the real one in the browser (deliberate failure 3).
+- `DELETE /users/me/sessions/` (trailing slash) must not reach "delete all": Spring Framework 6 doesn't match trailing slashes, so it's a 404 and revokes nothing *(seen in a scratch run)*. Keep it that way; test it.
+
+**Files.** `user/session/SessionService` (`revokeByRefreshToken`, `revokeOne`, `logOutEverywhere`, `listLive`, `LIST_SORT`), `SessionResponse`, `SessionErrorCode#SESSION_NOT_FOUND`, `UserSessionRepository#findLive`; `user/SessionWorkflow`, `SessionController`, `AuthController#logout`.
+
+---
+
+### C12. Revocation on password reset and change (§2.4)
+
+**What it does.** A password **reset** ends every session of the account; a password **change** ends every session except the one that made it. Lockout ends nothing.
+
+**How it's built.**
+- `SessionService.revokeAll(accountId, reason, now)` and `revokeAllExcept(accountId, exceptSid, reason, now)`, both `@Transactional(propagation = MANDATORY)`.
+- `PasswordService.confirmReset` calls `revokeAll(…, PASSWORD_RESET, now)`; `PasswordService.applyChange(accountId, currentSessionId, …)` calls `revokeAllExcept(…, currentSessionId, PASSWORD_CHANGED, now)`. Both run **inside** the password write's transaction, with that method's own `now`.
+- `PasswordWorkflow.changePassword` passes `AuthenticatedUser.sessionId()` as the current session.
+
+**Rules.**
+- **Revocation commits with the password change, or not at all.** A separate step afterwards could fail and leave "password changed, attacker still logged in" (deliberate failure 2). `MANDATORY` makes a call outside a transaction throw instead of committing alone.
+- **Reset → all sessions** (account-takeover recovery); **change → all others** (the caller just proved the password; no pointless re-login); **lockout → none** (otherwise five bad guesses by anyone would log the owner out everywhere) ↺ D7.
+- **`revokeAllExcept` refuses a null session id** (`Assert.notNull`): `id <> NULL` is *unknown* in SQL, so the `WHERE` would match nothing and **no** session would be revoked, silently (deliberate failure 4).
+- The bulk `UPDATE` touches `user_sessions` only, so the `UserAccount` changed earlier in the transaction is never re-saved over it.
+- No new event: `PASSWORD_RESET` / `PASSWORD_CHANGED` are already recorded by the same transaction.
+
+**Pitfalls.**
+- Calling `revokeAll` through `this` inside `SessionService` skips the proxy and its `MANDATORY` check (`logOutEverywhere` therefore calls the repository directly).
+
+**Files.** `user/session/SessionService` (`revokeAll`, `revokeAllExcept`); `user/PasswordService` (`confirmReset`, `applyChange`); `user/PasswordWorkflow#changePassword`.
+
+---
+
+### C13. CORS (§2.5)
+
+**What it does.** Lets a browser frontend on an allowed origin (dev: `http://localhost:3000`) call the API from JavaScript and **read** the responses. Credentials (the refresh cookie) are allowed only on `/api/v1/auth/**`; scripts on any other origin can't read responses.
+
+**How it's built.**
+- `CorsProperties` (from §2.3): exact origins, validated at startup (non-empty; each `scheme://host[:port]`; no `*`, path or trailing slash).
+- `TaskflowCorsConfiguration.source(corsProperties)` builds a `UrlBasedCorsConfigurationSource` with two registrations, **in this order**:
+
+| Pattern | Credentials | Methods | Request headers | Exposed headers | Max age |
+|---|---|---|---|---|---|
+| `/api/v1/auth/**` (first) | **allowed** | `GET, POST, PUT, PATCH, DELETE` | `Authorization, Content-Type, X-Correlation-Id` | `X-Correlation-Id, Location, WWW-Authenticate` | 1 h |
+| `/api/v1/**` (second) | not allowed | same | same | same | 1 h |
+
+- `TaskflowSecurityConfig`: `.cors(cors -> cors.configurationSource(TaskflowCorsConfiguration.source(corsProperties)))`, so the chain's `CorsFilter` runs before authentication and authorization. The source is not a bean.
+
+**Rules.**
+- **CORS lives in the security chain**, not only in Spring MVC: a preflight (`OPTIONS`) carries no credentials, so if it reached `authenticated()` it would get a 401 and the browser would report "CORS error" for every call. The chain's `CorsFilter` answers a valid preflight itself and stops there.
+- **Pass the source explicitly.** Spring Security's fallback looks up a bean named exactly `corsConfigurationSource`; a bean with any other name is silently ignored and CORS is off.
+- **The narrower pattern first.** `UrlBasedCorsConfigurationSource` returns the first match; `/api/v1/**` registered first would swallow `/api/v1/auth/**`, the refresh preflight would lack `Allow-Credentials`, and the browser would drop the cookie.
+- **Exact origins, never `*` or patterns.** With credentials, `*` is refused by Spring (`CorsConfiguration.validateAllowCredentials`); `allowedOriginPatterns("*")` would be accepted and would let any website make a logged-in browser call refresh and read the new access token.
+- **Credentials only where the cookie lives** (least privilege): the rest of the API authenticates with a header the script sets itself.
+- **Expose `WWW-Authenticate` and `X-Correlation-Id`**: scripts can't read non-safelisted response headers otherwise, so the frontend couldn't tell "refresh and retry" (`invalid_token`) from "log in", or show a correlation id to support.
+- **CORS protects reading, not the server.** A disallowed origin's simple request can still reach a server that has no CORS filter in front; that's why the cookie endpoints also check `Origin` (C9).
+
+**Pitfalls.**
+- A browser "CORS error" is often a 401 or 403 underneath: check the preflight's status in the network tab first.
+- `Origin: null` (sandboxed iframes, some redirects) must never be in the list.
+- curl ignores CORS: a working curl call proves nothing about browsers; the preflight table is the test.
+- A rejected CORS request gets Spring's plain-text `Invalid CORS request` body, not a `ProblemDetail`. The page can't read it anyway (the browser hides the response of a failed CORS request); only curl-style callers that fake an `Origin` see it.
+
+**Files.** `common/security/TaskflowCorsConfiguration`, `CorsProperties`, `TaskflowSecurityConfig`.
 
 ---
 
@@ -503,8 +607,10 @@ Follow the steps in order; each one is runnable before the next. Every decision 
 10. **Resolver, entry point, access-denied handler:** default resolver except the auth paths; problem-json writers; the entry point set in **both** `oauth2ResourceServer` and `exceptionHandling`.
 11. **Chain:** remove Basic; resource server with the four pieces; `permitAll` for the auth endpoints; `denyAll()` last; stateless; CSRF off with the reason written. Then move every reader of the old principal (auditor, `@AuthenticationPrincipal`, re-authentication by email) and keep any lockout listener reacting only to password authentications.
 12. **Refresh:** the six-step transactional `refresh` returning a result (Part C8); rollback-only on a dead session; a non-transactional workflow with the `Origin` check first; a controller that builds 200 + cookie or 401 + clearing cookie (except superseded).
-13. **Events:** `REFRESH_TOKEN_REUSED` (and the §2.4 ones) with `MANDATORY` propagation.
-14. **Prove it:** the 20-parallel-refresh race (exactly one 200, no 500); reuse after the grace window revokes the family and the winner's token dies too; a revoked session's access token gets 401 on the next request; `alg: none`, wrong key, wrong `aud`, expired → 401; an expired header on `/auth/refresh` is ignored.
+13. **Events:** `REFRESH_TOKEN_REUSED`, `SESSION_REVOKED`, `ALL_SESSIONS_REVOKED`, with `MANDATORY` propagation.
+14. **Revocation paths:** logout by cookie (+ `Origin`, always 204, always clears); a bearer-authenticated `/users/me/sessions` with list (`current` flag), revoke-one (owner in the `WHERE`, 404 for anything not revoked) and log out everywhere (this device included); `revokeAll` / `revokeAllExcept` (`MANDATORY`, null-guarded) called **inside** the password reset and change transactions.
+15. **CORS:** a `UrlBasedCorsConfigurationSource` from the same exact-origin list; the auth path registered first with credentials, the rest without; methods, request headers, exposed headers (`WWW-Authenticate`, the correlation id, `Location`) and max age; `http.cors(c -> c.configurationSource(source))` passed explicitly.
+16. **Prove it:** the 20-parallel-refresh race (exactly one 200, no 500); reuse after the grace window revokes the family and the winner's token dies too; a revoked session's access token gets 401 on the next request; `alg: none`, wrong key, wrong `aud`, expired → 401; an expired header on `/auth/refresh` is ignored; two devices: revoke one → its bearer and refresh 401, the other works; another user's session id → the same 404 as a random id; `DELETE …/sessions/` doesn't revoke all; reset → every session `PASSWORD_RESET`; change → others `PASSWORD_CHANGED`, the current works; preflights: the API path from the frontend → 200 without `Allow-Credentials`, the refresh path → 200 with it, a foreign origin → 403 without `Access-Control-Allow-Origin`; a real cross-origin call (including a 401) carries `Access-Control-Allow-Origin` and the exposed headers.
 
 **Values we used** (adjust per project): access 15 min · refresh 14 days idle · session 30 days absolute · reuse grace 10 s · clock skew 5 s · RSA 2048 · cookie `taskflow_refresh` on `/api/v1/auth`.
 
@@ -518,7 +624,20 @@ Follow the steps in order; each one is runnable before the next. Every decision 
 |---|---|---|---|---|
 | POST | `/api/v1/auth/login` | none (password in body) | 200 `{accessToken, tokenType, expiresIn, user}` + `Set-Cookie` | 400 `VALIDATION_FAILED` · 401 `AUTHENTICATION_FAILED` · 403 `EMAIL_NOT_VERIFIED` |
 | POST | `/api/v1/auth/refresh` | refresh cookie | 200 `{accessToken, tokenType, expiresIn}` + `Set-Cookie` (rotated) | 401 `INVALID_REFRESH_TOKEN` (+ clearing cookie unless superseded) · 403 `ORIGIN_NOT_ALLOWED` |
+| POST | `/api/v1/auth/logout` | refresh cookie (optional) | 204 + clearing `Set-Cookie` | 403 `ORIGIN_NOT_ALLOWED` |
+| GET | `/api/v1/users/me/sessions?page&size` | bearer | 200 page of `{id, createdAt, lastRefreshedAt, expiresAt, ipAddress, userAgent, current}` | 401 |
+| DELETE | `/api/v1/users/me/sessions/{id}` | bearer | 204 (+ clearing `Set-Cookie` if current) | 401 · 404 `SESSION_NOT_FOUND` |
+| DELETE | `/api/v1/users/me/sessions` | bearer | 204 + clearing `Set-Cookie` | 401 |
 | any | `/api/v1/**` (others) | `Authorization: Bearer` | as the endpoint | see the gate's errors below |
+
+### CORS responses (since §2.5)
+
+| Request | Response |
+|---|---|
+| Preflight to `/api/v1/**` from an allowed origin | 200, `Access-Control-Allow-Origin`, methods, headers, `Max-Age: 3600`, **no** `Allow-Credentials` |
+| Preflight to `/api/v1/auth/**` from an allowed origin | 200, as above **plus** `Access-Control-Allow-Credentials: true` |
+| Any CORS request (preflight or real) from a disallowed origin | 403, plain text `Invalid CORS request`, no `Access-Control-Allow-Origin` |
+| Real request from an allowed origin (any status, 401 included) | `Access-Control-Allow-Origin` + `Access-Control-Expose-Headers: X-Correlation-Id, Location, WWW-Authenticate` |
 
 ### The gate's errors (filter chain)
 
@@ -568,17 +687,23 @@ Spring Security 6.5.11 / Spring Framework 6.2.19 / Boot 3.5.16 / Hibernate 6.6, 
 | Spring Security Test's `jwt()` always builds a `JwtAuthenticationToken` | Tests use `authentication(new TaskflowAuthenticationToken(...))` |
 | Hibernate's HQL bulk `UPDATE` ignores `updatable = false` (entity flushes respect it) | Insert-only entities stay changeable by conditional updates |
 | `TransactionAspectSupport.currentTransactionStatus().setRollbackOnly()` in the outermost transaction rolls back silently on return *(seen in a scratch run)*; inside a caller's transaction it would cause `UnexpectedRollbackException` *(standard Spring behaviour, not run here)* | `refresh` must be called outside a transaction |
+| Spring Framework 6 doesn't match a trailing slash by default: `DELETE /users/me/sessions/` matches neither `/sessions` nor `/sessions/{id}` → 404 *(seen in a scratch run)* | "Delete all" can't be reached by accident |
+| Spring Data appends a `Pageable`'s sort to a JPQL constructor-expression query (it ran in a scratch run; the order itself wasn't asserted) | The session list sorts through `PageableFactory`, with no `ORDER BY` in the query |
+| `UrlBasedCorsConfigurationSource.getCorsConfiguration` returns the **first** registered pattern that matches | Register `/api/v1/auth/**` before `/api/v1/**` |
+| `CorsFilter`: a valid preflight is answered and the chain stops; an invalid CORS request (preflight **or** real, origin/method not allowed) is rejected by `DefaultCorsProcessor` with 403 and the plain body `Invalid CORS request`; same-origin requests aren't CORS requests and pass untouched | Preflights never reach authentication; a disallowed origin on `/auth/refresh` now gets the CORS 403 before `AllowedOrigins` *(both seen in a scratch run)* |
+| `CorsConfiguration.validateAllowCredentials` throws when credentials are on and the origins contain `*` | Exact origins only |
+| `CorsConfigurer` without an explicit source looks up a bean named exactly `corsConfigurationSource` | Pass the source to `http.cors(...)` |
 | curl 8.7.1 keeps `Secure` cookies over `http://localhost`; jar lines for `HttpOnly` cookies start with `#HttpOnly_` | Dev needs no `secure: false`; don't grep jars for `^#` |
 
 ---
 
 ## Part G — Known gaps, debt and what comes next
 
-**Next sub-sections:** §2.4 logout (`POST /auth/logout` via the cookie + `Origin`), log out everywhere, session list and revoke-one, revocation on password reset (all sessions) and change (all others); §2.5 CORS (credentials only on `/api/v1/auth/**`, auth registered first, source passed explicitly); §2.6 profile.
+**Phase 2 closed 2026-10-12.** §2.6 profile moved to Phase 3 (D17). The consolidated backlog (tests, open done-items, measurements, nits, later phases) is `PHASE_2_LEARNING_LOG.md` §8.
 
-**Tests owed** (all raised when Phase 2 closes, D9/D10/D12): §2.1's list (including `prod` refusing to start without a key), §2.2's beyond the integration tests that exist, and all of §2.3's (every `refresh` branch with `Clock.fixed`; JPA slice for consume and touch; the integration list including the 20-way race and the dead-session retry that must **not** record reuse).
+**Tests owed** (raised at phase close, D9/D10/D12/D14/D16; scheduling open): §2.1's list (including `prod` refusing to start without a key), §2.2's beyond the integration tests that exist, all of §2.3's (every `refresh` branch with `Clock.fixed`; JPA slice for consume and touch; the integration list including the 20-way race and the dead-session retry that must **not** record reuse), all of §2.5's (unit: `CorsProperties` rejects `*`, a trailing slash, a path, an empty list; integration: each row of the preflight table, a disallowed origin gets no `Access-Control-Allow-Origin`, the refresh preflight allows credentials and the organizations preflight doesn't), and all of §2.4's (JPA slice: `revokeOwned` with another user's id → 0, `revokeAllExcept` spares exactly one, a second revoke keeps the first reason; the integration list in `PHASE_2_REQUIREMENTS.md` §2.4).
 
-**Debt and nits:** `revokeAllExcept` must refuse a null session id before §2.4 uses it · `revokeAll`/`revokeAllExcept` vs `revoke`/`revokeOwned` disagree on the `expires_at` condition · the ephemeral-key profile check should also require `prod` to be absent · `ProblemDetails` uses `Instant.now()` instead of the `Clock` · single-line PEM in env vars (Phase 11) · the default `spring.profiles.active: dev` in `application.yml` lets a profile-less deploy run as dev · Phase 9 cleanup of expired sessions and consumed tokens · Phase 10 rate limiting on login and refresh.
+**Debt and nits:** a CORS rejection is plain text (`Invalid CORS request`), not a `ProblemDetail`: **accepted, D15** (browsers hide that body; a fix would need our own `CorsFilter`) · `revokeAll`/`revokeAllExcept` vs `revoke`/`revokeOwned` disagree on the `expires_at` condition · the ephemeral-key profile check should also require `prod` to be absent · `ProblemDetails` uses `Instant.now()` instead of the `Clock` · single-line PEM in env vars (Phase 11) · the default `spring.profiles.active: dev` in `application.yml` lets a profile-less deploy run as dev · Phase 9 cleanup of expired sessions and consumed tokens · Phase 10 rate limiting on login and refresh.
 
 ---
 
@@ -588,3 +713,6 @@ Spring Security 6.5.11 / Spring Framework 6.2.19 / Boot 3.5.16 / Hibernate 6.6, 
 |---|---|---|
 | 2026-10-10 | §2.1–§2.3 | Created: principles, architecture, C1–C10, recipe, quick reference, verified framework behaviour, gaps. §2.3 includes the dead-session rollback fix (a refresh that finds its session ended no longer consumes the token). |
 | 2026-10-11 | §2.3 | Run passed (Postman + terminal: rotation, reuse after the grace window, 20-way race, superseded, `Origin`, expired, dead-session rollback, role change). D13 (rollback fix) and D14 (tests skipped) recorded in `PHASE_2_REQUIREMENTS.md`. |
+| 2026-10-11 | §2.4 | Added C11 (logout, session list, revoke one, log out everywhere) and C12 (revocation inside password reset/change); revocation flow in Part B; recipe step 14; endpoints in Part E; trailing-slash and pageable-sort facts in Part F. The null-`sid` debt is closed (`revokeAllExcept` asserts it). Verified in a scratch copy (two devices, IDOR 404, trailing slash, logout cases, reset, change); your run and tests pending. |
+| 2026-10-11 | §2.5 | Added C13 (CORS) and its rows in Parts B, D (step 15), E (CORS responses) and F (first match, `CorsFilter` behaviour, credentials + `*`, bean-name lookup). C9 notes that the CORS filter now rejects a disallowed cross-origin refresh/logout before `AllowedOrigins`. Verified in a scratch copy: every row of the preflight table, a cross-origin 401 carrying `Access-Control-Allow-Origin`; your run and tests pending. |
+| 2026-10-12 | §2.4, §2.5, close | Both run in full by Claude on a scratch copy + scratch DB (every row, §2.4 deliberate failures 1–4, §2.5 1–3; suite 83/83, 12 s, 2 containers). D15 (CORS plain-text 403 accepted), D16 (no §2.4/§2.5 tests), D17 (§2.6 → Phase 3). Phase 2 closed. |
