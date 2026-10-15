@@ -29,4 +29,16 @@ public class TestcontainersConfiguration {
     CapturingEmailSender capturingEmailSender() {
         return new CapturingEmailSender();
     }
+
+    /**
+     * The clock every Clock-injecting bean gets in tests (the issuer, the JWT decoder's expiry check, sessions,
+     * lockout, tokens). {@code @Primary} so it wins over TimeConfig's {@code Clock.systemUTC()}. Declared here, in the
+     * shared configuration, for the same reason as the inbox above: a {@code @MockitoBean Clock} or a per-class
+     * {@code @TestConfiguration} would start another application context and another Postgres container.
+     */
+    @Bean
+    @Primary
+    AdjustableClock adjustableClock() {
+        return new AdjustableClock();
+    }
 }

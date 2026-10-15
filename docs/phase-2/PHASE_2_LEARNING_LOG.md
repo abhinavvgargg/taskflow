@@ -27,7 +27,7 @@
 
 **Not built:** §2.6 profile (moved to Phase 3, D17). **Tests:** §2.2's migration + 5 integration tests only; nothing for §2.1, §2.3, §2.4, §2.5 (D10, D12, D14, D16).
 
-**Commits:** `9b10252` (§2.1) · `9e07cbb` (§2.2) · `34c15f2` (§2.3) · §2.4 + §2.5 not yet committed at phase close.
+**Commits:** `9b10252` (§2.1) · `9e07cbb` (§2.2) · `34c15f2` (§2.3) · `b6f3dde` (§2.4 + §2.5).
 
 ### Evidence
 
@@ -279,7 +279,9 @@ update user_sessions set revoked_at = now(), revoke_reason = 'LOGOUT' where id =
 
 ## 8. Backlog at phase close (2026-10-12): everything still owed
 
-### A. Test debt (⏰ raised now: scheduling is your call)
+### A. Test debt (Phase 3 D1, 2026-10-13: **Tier 1 paid** in Phase 3 §3.0, 18 tests, all mutation-checked; Tier 2 → Phase 11)
+
+*Paid by §3.0:* the lockout rollback trap, reset single use and its race, change/reset session revocation, enumeration (§1.5–§1.6); `prod` without a key (§2.1); the revoked-session 401 (§2.2); rotation, reuse, superseded, the 20-way race, the dead-session rollback (§2.3); session IDOR and the trailing slash (§2.4). *Still owed (Tier 2, Phase 11):* everything else in the table below.
 
 | Owed | What the tests must prove | Decision |
 |---|---|---|
@@ -307,7 +309,7 @@ Plus: Phase 0's "never echo `rejectedValue`" test, and **mutation checks for all
 
 ### D. Process
 
-- **Commit §2.4 + §2.5** (uncommitted at close).
+- *Done:* §2.4 + §2.5 committed (`b6f3dde`).
 - **Your 15-minute notes** for Phase 1 and Phase 2 (both templates still empty).
 - **OpenAPI** (was "after Phase 2": now due): `/v3/api-docs` and `/swagger-ui` permitted in dev only, bearer scheme documented once.
 

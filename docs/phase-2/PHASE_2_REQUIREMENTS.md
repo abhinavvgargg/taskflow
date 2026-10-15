@@ -7,11 +7,11 @@
 
 | | |
 |---|---|
-| **Done** | §2.1 (`9b10252`) · §2.2 (`9e07cbb`) · §2.3 (`34c15f2`) · **§2.4** logout, sessions, revocation on password events · **§2.5** CORS (both run in full by me on a scratch copy 2026-10-12: every row, 7 deliberate failures, suite 83/83 in 12 s with 2 containers; **not yet committed**). §2.6 profile **moved to Phase 3** (D17). Tests for §2.1–§2.5 not written (D10, D12, D14, D16). |
+| **Done** | §2.1 (`9b10252`) · §2.2 (`9e07cbb`) · §2.3 (`34c15f2`) · **§2.4** logout, sessions, revocation on password events · **§2.5** CORS (both run in full by me on a scratch copy 2026-10-12: every row, 7 deliberate failures, suite 83/83 in 12 s with 2 containers; committed `b6f3dde`). §2.6 profile **moved to Phase 3** (D17). Tests for §2.1–§2.5 not written (D10, D12, D14, D16). |
 | **Next** | 1. **Schedule the test debt** (D9 + D10 + D12 + D14 + D16: the consolidated backlog is `PHASE_2_LEARNING_LOG.md` §8). 2. Your 15-minute Phase 1 **and** Phase 2 notes. 3. OpenAPI (due "after Phase 2"). 4. **Brief Phase 3** (orgs & multi-tenancy) in a new `docs/phase-3/PHASE_3_REQUIREMENTS.md`, with §1.7/§2.6 profile as its side task. |
-| **Decisions to raise** | ⏰ **Now: when the test debt gets paid** (it's raised in the backlog; not yet scheduled). Open Definition-of-done items: `prod`-without-key proof, README. |
+| **Decisions to raise** | **When the test debt gets paid: raised as Phase 3's D1** (2026-10-13, `../phase-3/PHASE_3_REQUIREMENTS.md`; pending your choice). Open Definition-of-done items: `prod`-without-key proof (→ Phase 3 §3.0), README (→ Phase 3 §3.5). |
 | **Carried in** | See *Carried in from Phase 1*: filter-chain 401/403 as `ProblemDetail`, "reject tokens issued before `password_changed_at`" (closed by D5 + D7), §1.7 profile (§2.6), the §1.3–§1.6 tests (D9: deferred, raised at Phase 2's close), OpenAPI (after this phase). |
-| **Environment state** | Dev DB at **V5** in your copy (V6 applies on your next start; V1–V6 frozen). The §2.4/§2.5 verification used a scratch copy and a scratch database (`taskflow_scratch_p2`, **dropped** afterwards): your dev DB wasn't touched. The dev signing key is ephemeral. |
+| **Environment state** | Dev DB at **V6** (checked 2026-10-13; V1–V6 frozen). The §2.4/§2.5 verification used a scratch copy and a scratch database (`taskflow_scratch_p2`, **dropped** afterwards): your dev DB wasn't touched. The dev signing key is ephemeral. |
 | **Numbering** | Decisions are numbered **D1–D9** in this doc; the Decisions table holds them with dates. |
 
 ---
@@ -1176,7 +1176,7 @@ A browser frontend on an allowed origin (dev: `http://localhost:3000`) can call 
 - [x] No `httpBasic` anywhere; a Basic header gets 401. (tests: `basicCredentials_areNoLongerAccepted`)
 - [x] Login → 200 with an access token in the body and an `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth` cookie; `Cache-Control: no-store`. (reported §2.1; `no-store` comes from Spring Security's default headers, verified in source, not asserted by a test)
 - [x] The decoded access token has the agreed claims and **no email**. (reported §2.1, your decoded token)
-- [ ] `prod` without a signing key refuses to start. **Open:** the code does it (read), but no run proved it *because of the key* (the missing `EmailSender` may fail first). → backlog
+- [x] `prod` without a signing key refuses to start. **Proven 2026-10-13** by `JwtKeyConfigTest` (Phase 3 §3.0: `ApplicationContextRunner` with only the key configuration, so nothing else can fail first; an unknown profile fails too).
 - [x] Expired, foreign-key, wrong-audience and `alg: none` tokens → 401 `INVALID_ACCESS_TOKEN` with a `ProblemDetail` body and `WWW-Authenticate`. (reported §2.2: expired, `alg: none`, foreign key via restart; **wrong `aud` never exercised**)
 - [x] Every 401/403 from the chain is a `ProblemDetail` with a `correlationId`. (tests + ran) **One accepted exception:** the CORS rejection (D15).
 - [x] Refresh rotates the cookie; the old cookie after the grace window revokes the session, records `REFRESH_TOKEN_REUSED`, and kills the new token too. (reported §2.3)
@@ -1187,10 +1187,10 @@ A browser frontend on an allowed origin (dev: `http://localhost:3000`) can call 
 - [x] `created_by` = the username for bearer-authenticated writes. (tests: `OrganizationApiIntegrationTest`)
 - [x] No access token, refresh token, email or password in the logs at INFO. (read: Phase 2 logs ids, reasons and the key id only; the dev email sender stays the documented exception. Note: test runs log SQL binds at `TRACE`.)
 - [x] Suite green; the Basic-based tests are migrated, not disabled. (tests: 83/83)
-- [x] ⏰ **D9 + D10 + D12 + D14 (+ D16) raised** 2026-10-12, in the consolidated backlog. *Scheduling is still open: your call.*
+- [x] ⏰ **D9 + D10 + D12 + D14 (+ D16) raised** 2026-10-12, in the consolidated backlog. *Scheduling raised as Phase 3's D1 (2026-10-13).*
 - [ ] README updated: login, refresh, logout, the cookie, bearer usage with curl (`-c`/`-b` jar), and that Basic is gone. **Open** → backlog
 - [x] `PROJECT_CONTEXT.md` §5's Phase 2 row matches what was built (D1). (2026-10-02)
-- [x] Small commits, about one per sub-section, staged by file name. (`9b10252`, `9e07cbb`, `34c15f2`; §2.4 + §2.5 still to commit)
+- [x] Small commits, about one per sub-section, staged by file name. (`9b10252`, `9e07cbb`, `34c15f2`, `b6f3dde` for §2.4 + §2.5)
 
 ---
 

@@ -140,3 +140,33 @@ Plant each bug in turn, run the tests, confirm at least one fails, then revert. 
 - **Move the class** from the root package to `com.abhinav.taskflow.common.security`, next to the config it tests. Test packages mirror main packages.
 - **Name each test after the rule** (`authEndpoints_getIsRejected_evenAnonymously`), not the mechanism (`rejectsMissingCredentials`). When it fails in CI, the name alone should tell you which rule broke.
 - **Change the tests with the rules.** §1.2 adds real users (so the `ADMIN` rows become testable in integration), and each new endpoint adds a row. That's why the table layout pays off.
+
+---
+
+## 8. Sessions, time and races (added 2026-10-13, Phase 3 §3.0)
+
+> Every pattern below is used by a test in the suite and was **verified** by planting the bug it targets (all 14 caught; table in `../phase-3/PHASE_3_REQUIREMENTS.md` §3.0). The tools live in `src/test/java/com/abhinav/taskflow/`.
+
+### 8.1 The tools
+
+| Tool | Use it for | How to read a test that uses it |
+|---|---|---|
+| `AdjustableClock` (`@Primary`, shared config) | Anything with a deadline: lockout, reuse grace, expiry | `clock.reset()` in `@BeforeEach`; a line `clock.advance(...)` in a test is the moment "time passes". Everything before it happened "then", everything after happens "later". |
+| `TestLogins.login(rt, user)` → `LoginTokens` | One **device**: two logins of the same user = two sessions | Variables are named after devices (`laptop`, `phone`) so the assertions read as a story: "after the change, the laptop still works, the phone doesn't". |
+| `TestLogins.cookieHeader(raw)` | Sending exactly one refresh cookie | The test client keeps **no cookie jar** (JDK `HttpClient`, *verified*), so every refresh call shows which token it presents. `refresh(login.refreshToken())` after a rotation = "an old copy". |
+| `TestLogins.refreshSetCookie` / `refreshTokenIn` | What the response did to the cookie | `refreshSetCookie(...)` **empty** = the cookie was left alone; containing `Max-Age=0` = cleared; `refreshTokenIn(...)` = the rotated token. |
+| `TestLogins.sessionIdOf(accessToken)` | Finding "this device's" session row | Reads the `sid` claim; SQL then checks the row (`revoke_reason`, `revoked_at`). |
+| `Concurrently.run(n, call)` | Real races (refresh, reset token) | The call inside runs n times **at once**; the assertions after it are counts of the results. |
+| `ProblemBodies.withoutRequestSpecificFields` | "Indistinguishable" error answers | Two bodies equal after removing `timestamp`, `correlationId`, `instance` = nothing for an attacker to tell apart. |
+| `ApplicationContextRunner` | "Refuses to start" | `withInitializer(ctx -> ctx.getEnvironment().setActiveProfiles(...))` sets the profile; `assertThat(context).hasFailed()`. No Spring test context, no container. |
+
+### 8.2 Patterns, and the trap each avoids
+
+- **Assert the database, not only the response.** A 401 tells you the request failed; only the row tells you what the failure *left behind* (a revoked session, a consumed token, an event). Every refresh test checks `revoke_reason`, `consumed_at` or the event count after the HTTP assertions.
+- **Two-sided assertions on revocation.** "The other device is out" is half the rule; "and this one still works" is the other half. A test with only the first half passes when *everything* is revoked (mutation 7 proved the second half is needed).
+- **Old token, then later.** Reuse detection needs a consumed token presented *after the grace*: rotate, `advance(11 s)`, present the old one. Superseded needs the opposite, and the token must be **old when consumed** (`advance(30 s)` before the first refresh), or "grace from creation" and "grace from consumption" can't be told apart (mutation 3a).
+- **Races: one latch, counts, and "no 500".** `filteredOn(s -> s == 401).hasSize(19)` also proves there was no 409 or 500 among the twenty.
+- **Positive pair for every "nothing happened".** No email for an unknown address only means something next to "an email for a known one".
+- **Allow-lists need an unlisted input.** "`prod` refuses" passes a block-list; "`staging` refuses" doesn't.
+- **Moving the clock past the access lifetime** (15 min) expires every bearer token obtained earlier: log in after moving it.
+- **Cleanup**: users are deleted in `@BeforeEach` (sessions, tokens and events cascade). From Phase 3 §3.1, organizations must be deleted **first** (the owner invariant refuses to delete an owner).
