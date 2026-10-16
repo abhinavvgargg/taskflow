@@ -1,5 +1,7 @@
 package com.abhinav.taskflow.common.security;
 
+import com.abhinav.taskflow.common.tenant.MembershipLookup;
+import com.abhinav.taskflow.common.tenant.TenantContext;
 import com.abhinav.taskflow.user.TaskflowUserDetailsService;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -29,12 +31,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (the slice runs as {@code dev}). Both are in {@link TaskflowSecurityIntegrationTest}.
  */
 @WebMvcTest(TaskflowSecurityConfig.class)
-@Import(TaskflowSecurityConfig.class)
+@Import({TaskflowSecurityConfig.class, TenantContext.class})
 class
 TaskflowSecurityConfigTest {
 
     @MockitoBean
     private TaskflowUserDetailsService taskflowUserDetailsService;
+
+    // Web slices load every HandlerInterceptor and WebMvcConfigurer, so the tenant gate is here too; it needs these two
+    // to start (no row below reaches /organizations/{orgId}, so neither is ever called)
+    @MockitoBean
+    private MembershipLookup membershipLookup;
 
     // TaskflowSecurityConfig needs both to start; JwtKeyConfig and user.session aren't part of a web slice
     @MockitoBean

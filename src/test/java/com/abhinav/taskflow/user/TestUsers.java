@@ -60,7 +60,12 @@ public class TestUsers {
                 java.sql.Timestamp.from(lockedUntil), username);
     }
 
+    /**
+     * Organizations first: V7's deferred trigger refuses to delete a user who still owns one, and every class shares one
+     * database, so organizations left behind by ANOTHER class would otherwise break this class's cleanup.
+     */
     public void deleteAll() {
+        jdbcTemplate.update("delete from organizations");   // memberships cascade
         userAccountRepository.deleteAll();
     }
 

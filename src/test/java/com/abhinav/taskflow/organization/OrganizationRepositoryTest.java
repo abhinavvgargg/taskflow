@@ -26,9 +26,9 @@ class OrganizationRepositoryTest {
 
     @Test
     void existsBySlug_findsPersistedRow() {
-        Organization org = new Organization();
-        org.setName("Acme Corp");
-        org.setSlug("acme-corp");
+        // No owner membership: this passes ONLY because @DataJpaTest rolls back, and V7's "has an owner" trigger is
+        // deferred to a commit that never comes. OrganizationMembershipRepositoryTest proves the invariant itself.
+        Organization org = Organization.create("Acme Corp", "acme-corp");
         entityManager.persistAndFlush(org);   // actually INSERT
         entityManager.clear();                // forget it, so reads hit the DB
 
@@ -61,9 +61,6 @@ class OrganizationRepositoryTest {
     }
 
     private static Organization organization(String name, String slug) {
-        Organization org = new Organization();
-        org.setName(name);
-        org.setSlug(slug);
-        return org;
+        return Organization.create(name, slug);
     }
 }

@@ -4,15 +4,16 @@
 > **Time-box: 8h, tests included. Hard stop at 12h (150%).** The carried test debt is not in it (D1 gives it its own budget). Anything unfinished becomes a side task in Phase 4.
 > You run the app from IntelliJ and call the API with Postman; run steps come after each sub-section is built, in Postman form (one collection per user: alice, bob, carol).
 
-## ▶ Where we are (resume here) — §3.0 done 2026-10-13; §3.1 next
+## ▶ Where we are (resume here) — §3.1 done 2026-10-16 (not yet committed); §3.2 next
 
 | | |
 |---|---|
-| **Done** | Phase 2 closed 2026-10-12; §2.4 + §2.5 committed (`b6f3dde`). **§3.0** (2026-10-13, not yet committed): 18 Tier-1 tests + infrastructure, written by Claude at your request; all 14 mutations caught; suite 101 tests, 14 s, 2 containers. This brief: D1–D8 raised, §3.0–§3.7 written, V7–V9 SQL **verified on a scratch copy of your dev database** (2026-10-13; `taskflow_scratch_p3`, dropped afterwards; your dev DB untouched, still at V6). |
-| **Next** | 1. **Read the §3.0 tests** (`PHASE_3_LEARNING_LOG.md` explains how to read each). 2. Commit §3.0 (test files + docs, staged by name). 3. Your 15-minute Phase 1 and Phase 2 notes (both templates still empty). 4. **§3.1**: V7, the gate, memberships. |
+| **Done** | Phase 2 closed 2026-10-12; §2.4 + §2.5 committed (`b6f3dde`). **§3.0** (2026-10-13, committed `ec5acad`): 18 Tier-1 tests + infrastructure, written by Claude at your request; all 14 mutations caught; suite 101 tests, 14 s, 2 containers. This brief: D1–D8 raised, §3.0–§3.7 written, V7–V9 SQL **verified on a scratch copy of your dev database** (2026-10-13; `taskflow_scratch_p3`, dropped afterwards; your dev DB untouched, still at V6). |
+| **§3.1** | ✅ **Done 2026-10-16: your Postman run passed all 23 rows.** Built 2026-10-15, code and tests written by Claude at your request, in the build order. Suite **136 tests, 0 failures, 18.6 s, 2 containers**; 15 of 15 mutations caught; deliberate failures 1–5 observed (results at the end of §3.1). Two gaps found and fixed: a commit-time violation's 409 had no constraint name (`CommonErrorUtility`); a plain `OPTIONS` on an org path was a 500 (review finding, 2026-10-16: the gate now gates only `@Controller` methods). |
+| **Next** | 1. **Commit §3.1** (code, V7, tests, docs; staged by name). 2. Your 15-minute Phase 1 and Phase 2 notes (both templates still empty). 3. **§3.2** (roles, removal, leave, transfer), and as you pass: the owed test (an `OPTIONS` mapping we write must stay gated) and the commented-out `findRoleByOrganizationIdAndUserAccountId` (end of §3.1). |
 | **Decisions to raise** | None open. D1–D8 all decided 2026-10-13 (the recommendations), so V7–V9 stand as written. OpenAPI moved to Phase 11 (the proposal, taken with the recommendations). |
 | **Debt** | Test debt: **Tier 1 paid** (§3.0); Tier 2 → Phase 11 (list in §3.0 *Out*). Phase 2's `prod`-without-key done-item: **proven** (`JwtKeyConfigTest`). README → §3.5. Nits: *Carried in*. |
-| **Environment state** | Dev DB at **V6** (6 organizations: 2 have a creator who is a real user and get an owner from V7's backfill; 4 were created as `system` and stay ownerless, see §3.1). The dev signing key is ephemeral. |
+| **Environment state** | Dev DB at **V7** (applied 2026-10-16 by your app start; backfill: `demo-org9` → alice, `demo-org98` → `abhinavvgargg-jwt`; the 4 `system` organizations stay ownerless and unreachable). Your Postman run may have left `p31…` users and organizations (cleanup SQL at the end of §3.1 *Run it*). The dev signing key is ephemeral. |
 | **Numbering** | Decisions are **D1–D8** in this doc (Phase 2's D-numbers are prefixed "Phase 2" when referenced). Migrations: V7 (§3.1), V8 (§3.3), V9 (§3.4); V1–V6 frozen. |
 
 ---
@@ -420,7 +421,7 @@ controller → service: reads the organization id from TenantContext (never from
 
 #### The migration (V7): you apply it; the SQL is below
 
-- [ ] `V7__create_organization_memberships.sql` is added exactly as given, and the app starts with `ddl-auto: validate`.
+- [x] `V7__create_organization_memberships.sql` is added exactly as given, and the app starts with `ddl-auto: validate`.
 
 ```sql
 -- Organizations become tenants: one row per (organization, user), with the user's role in that organization.
@@ -520,48 +521,48 @@ join user_accounts u on u.username = o.created_by;
 
 #### `OrganizationRole`, `TenantContext`, `TenantErrorCode` (`common/tenant`)
 
-- [ ] `OrganizationRole` has `OWNER`, `ADMIN`, `MEMBER` and `isAbove(other)`, where OWNER is above ADMIN, which is above MEMBER.
-- [ ] `TenantContext` is `@RequestScope` and holds an organization id and a role.
-- [ ] `enter(organizationId, role)` may be called once per request; a second call throws `IllegalStateException`.
-- [ ] `organizationId()` and `role()` throw `IllegalStateException` when no tenant was entered (a service reached without the gate is a bug: 500).
-- [ ] `isEntered()` reports whether a tenant was entered (the Hibernate resolver uses it in §3.4).
-- [ ] `requireAtLeast(role)` throws a 403 `ORGANIZATION_ROLE_REQUIRED` when the caller's role is below it.
-- [ ] `TenantErrorCode` holds `ORGANIZATION_NOT_FOUND` (404) and `ORGANIZATION_ROLE_REQUIRED` (403); `OrganizationErrorCode` loses its own `ORGANIZATION_NOT_FOUND` (one code, one place).
+- [x] `OrganizationRole` has `OWNER`, `ADMIN`, `MEMBER` and `isAbove(other)`, where OWNER is above ADMIN, which is above MEMBER.
+- [x] `TenantContext` is `@RequestScope` and holds an organization id and a role.
+- [x] `enter(organizationId, role)` may be called once per request; a second call throws `IllegalStateException`.
+- [x] `organizationId()` and `role()` throw `IllegalStateException` when no tenant was entered (a service reached without the gate is a bug: 500).
+- [x] `isEntered()` reports whether a tenant was entered (the Hibernate resolver uses it in §3.4).
+- [x] `requireAtLeast(role)` throws a 403 `ORGANIZATION_ROLE_REQUIRED` when the caller's role is below it.
+- [x] `TenantErrorCode` holds `ORGANIZATION_NOT_FOUND` (404) and `ORGANIZATION_ROLE_REQUIRED` (403); `OrganizationErrorCode` loses its own `ORGANIZATION_NOT_FOUND` (one code, one place).
 
 #### `MembershipLookup` (interface, `common/tenant`) and `JpaMembershipLookup` (`organization`)
 
-- [ ] `roleOf(organizationId, userAccountId)` returns the role, or empty for a non-member or a non-existent organization.
-- [ ] It's one query (role only, no entity) in its own read-only transaction.
+- [x] `roleOf(organizationId, userAccountId)` returns the role, or empty for a non-member or a non-existent organization.
+- [x] It's one query (role only, no entity) in its own read-only transaction.
 
 #### `TenantGateInterceptor` and `TenantWebConfig` (`common/tenant`)
 
-- [ ] The interceptor is registered for `/api/v1/organizations/*` and `/api/v1/organizations/*/**`, and not for `/api/v1/organizations` itself.
-- [ ] It reads the `orgId` path variable; when the variable is missing it throws `IllegalStateException` (fail closed).
-- [ ] A non-numeric `orgId` → 404 `ORGANIZATION_NOT_FOUND`.
-- [ ] It takes the user id from the `AuthenticatedUser` principal; any other principal type throws `IllegalStateException`.
-- [ ] No membership → 404 `ORGANIZATION_NOT_FOUND`, the same body as for an id that doesn't exist.
-- [ ] A membership → `TenantContext.enter(orgId, role)`.
+- [x] The interceptor is registered for `/api/v1/organizations/*` and `/api/v1/organizations/*/**`, and not for `/api/v1/organizations` itself.
+- [x] It reads the `orgId` path variable; when the variable is missing it throws `IllegalStateException` (fail closed).
+- [x] A non-numeric `orgId` → 404 `ORGANIZATION_NOT_FOUND`.
+- [x] It takes the user id from the `AuthenticatedUser` principal; any other principal type throws `IllegalStateException`.
+- [x] No membership → 404 `ORGANIZATION_NOT_FOUND`, the same body as for an id that doesn't exist.
+- [x] A membership → `TenantContext.enter(orgId, role)`.
 
 **Done when:** alice (owner of A) gets 200 on `GET /organizations/{A}`; bob (no membership) gets a 404 on `GET /organizations/{A}` identical, bar timestamp, correlation id and path, to `GET /organizations/999999999`.
 
 #### `Organization`, `OrganizationMembership` (entities, `organization`)
 
-- [ ] `Organization` is created through a factory `Organization.create(name, slug)`; the public no-arg constructor and setters go (nit).
-- [ ] `OrganizationMembership` extends `BaseEntity`; `organizationId` and `userAccountId` are `Long`s; `role` is `@Enumerated(STRING)`.
-- [ ] Every column of `OrganizationMembership` is `updatable = false`; it has a factory `OrganizationMembership.of(organizationId, userAccountId, role)` and no setters.
+- [x] `Organization` is created through a factory `Organization.create(name, slug)`; the public no-arg constructor and setters go (nit).
+- [x] `OrganizationMembership` extends `BaseEntity`; `organizationId` and `userAccountId` are `Long`s; `role` is `@Enumerated(STRING)`.
+- [x] Every column of `OrganizationMembership` is `updatable = false`; it has a factory `OrganizationMembership.of(organizationId, userAccountId, role)` and no setters.
 
 #### `OrganizationService` and `MembershipService` (`organization`)
 
-- [ ] `create(request, caller)` saves the organization and an `OWNER` membership for the caller in one transaction.
-- [ ] A duplicate slug is still 409 `DUPLICATE_SLUG` (checked first; `uk_organizations_slug` stays the guard).
-- [ ] `listMine(caller, pageable)` returns only organizations the caller is a member of, with the caller's role.
-- [ ] `get()` returns the organization from `TenantContext` with the caller's role.
-- [ ] `MembershipService.listMembers(pageable)` returns the members of the `TenantContext` organization: user id, username, display name, role, joined at; **no email** (data minimisation: members don't need each other's addresses).
+- [x] `create(request, caller)` saves the organization and an `OWNER` membership for the caller in one transaction.
+- [x] A duplicate slug is still 409 `DUPLICATE_SLUG` (checked first; `uk_organizations_slug` stays the guard).
+- [x] `listMine(caller, pageable)` returns only organizations the caller is a member of, with the caller's role.
+- [x] `get()` returns the organization from `TenantContext` with the caller's role.
+- [x] `MembershipService.listMembers(pageable)` returns the members of the `TenantContext` organization: user id, username, display name, role, joined at; **no email** (data minimisation: members don't need each other's addresses).
 
 #### `OrganizationController` and `MemberController`
 
-- [ ] `OrganizationController`'s `{id}` path variable is renamed `{orgId}`.
-- [ ] The response gains `role` (the caller's role in that organization).
+- [x] `OrganizationController`'s `{id}` path variable is renamed `{orgId}`.
+- [x] The response gains `role` (the caller's role in that organization).
 
 | Method | Path | Request | Success | Errors |
 |---|---|---|---|---|
@@ -578,15 +579,17 @@ join user_accounts u on u.username = o.created_by;
 - **A controller that names the variable `{id}` or `{organizationId}`.** The gate reads `orgId` by name; it must **fail** when it's missing, never skip. The current `OrganizationController` uses `{id}`.
 - **A service that takes the org id from the path variable** instead of `TenantContext`: equal today, but the day a body field or a second path variable is used instead, the gate checked a different value from the one the query uses.
 - **Deferred checks don't run in rolled-back tests.** `@DataJpaTest` rolls back each test, so a test that persists an organization **without** an owner still passes (the existing `OrganizationRepositoryTest` does exactly that). A test that means to prove the invariant flushes, then runs `SET CONSTRAINTS ALL IMMEDIATE` (*verified*).
-- **The error arrives at commit, not at `save()`.** A deferred violation surfaces when the `@Transactional` method returns: Spring's `JpaTransactionManager.doCommit` translates the cause to a `DataAccessException` (*verified* in spring-orm 6.2.19); that it arrives as `DataIntegrityViolationException` with the name is *inferred* (deliberate failure 1 shows it).
+- **The error arrives at commit, not at `save()`.** A deferred violation surfaces when the `@Transactional` method returns: Spring's `JpaTransactionManager.doCommit` translates the cause to a `DataAccessException` (*verified* in spring-orm 6.2.19); that it arrives as `DataIntegrityViolationException` with the name is *inferred* (deliberate failure 1 shows it). *(Run 2026-10-15: half right. It IS a `DataIntegrityViolationException` (Hibernate's "Unable to commit" around the raw `PSQLException`, translated by SQLState), but with no Hibernate `ConstraintViolationException` in the chain, so the 409 carried **no** constraint name. Fixed in `CommonErrorUtility`: it now reads the name from a raw `SQLException` with Hibernate's PostgreSQL extractor.)*
 - **Test cleanup order**: delete organizations before users (see §3.0's traps).
+- **Every web slice now loads the gate** *(verified 2026-10-15 in the `spring-boot-test-autoconfigure` 3.5.16 bytecode: `WebMvcTypeExcludeFilter` includes `HandlerInterceptor` and `WebMvcConfigurer` beans)*. `TenantGateInterceptor` and `TenantWebConfig` are pulled into `OrganizationControllerTest` and `TaskflowSecurityConfigTest`, but `TenantContext` and `JpaMembershipLookup` aren't, so **both slices stop starting** until they get a `@MockitoBean MembershipLookup` and `@Import(TenantContext.class)`. *(My brief missed this; added at §3.1's start.)*
+- **`@WithMockUser` meets the gate.** Its principal is Spring's `User`, not `AuthenticatedUser`; the gate refuses any other type (500, by design). Slice tests on `/organizations/{orgId}/…` authenticate with `authentication(new TaskflowAuthenticationToken(new AuthenticatedUser(...)))` (Phase 2's tool) and stub `MembershipLookup.roleOf`.
 - **`created_by` is a username, not an id**: the backfill joins on it. A user who renames themselves (no such feature) would break that join; it's a one-time migration, so fine.
 
 ### Deliberate failures
 
 | Create this | What you'll see | Lesson |
 |---|---|---|
-| 1. In `create`, save the organization but skip the owner membership | 409 `RESOURCE_CONFLICT` with `constraint: ck_organizations_has_owner`, and no organization row (*predicted from the verified SQL and the commit path*) | The database refuses what the code forgot; the error comes at commit |
+| 1. In `create`, save the organization but skip the owner membership | 409 `RESOURCE_CONFLICT` with `constraint: ck_organizations_has_owner`, and no organization row (*predicted from the verified SQL and the commit path*; **observed** 2026-10-15, after the constraint-name fix below) | The database refuses what the code forgot; the error comes at commit |
 | 2. Register the interceptor for `/api/v1/organizations/**` (collection included) | `GET /api/v1/organizations` → 500 (no `orgId` variable: fail closed) | Patterns decide where the gate runs; failing closed makes a wrong pattern loud |
 | 3. Map one endpoint as `/organizations/{id}/members`, and make the gate skip when `orgId` is missing | bob lists alice's members: 200 | A gate that skips on a missing input is a gate with a door in it |
 | 4. Return 403 for non-members | bob can tell existing organization ids from non-existent ones | Existence oracle; 404 for both |
@@ -601,6 +604,16 @@ join user_accounts u on u.username = o.created_by;
 5. "My organizations", get, members list.
 6. → *Deliberate failure 5.* Migrate the existing organization tests (the list is now "mine"; `get` needs membership): migrate, don't disable.
 
+**Existing tests this sub-section changes** (none may be disabled):
+
+| Test | Why it changes | What it needs |
+|---|---|---|
+| `TaskflowSecurityConfigTest` (web slice) | The gate's beans load in every slice | `@MockitoBean MembershipLookup`, `@Import(TenantContext.class)`; its rows stay as they are (none hit `/organizations/{orgId}`) |
+| `OrganizationControllerTest` (web slice) | Same, plus `getById` now passes the gate and the service API changes | The two above; `getById` authenticates as an `AuthenticatedUser` and stubs `roleOf` → `MEMBER`; the DTO gains `role` |
+| `OrganizationApiIntegrationTest` | The list is "mine", get needs membership, cleanup order | Delete organizations before users; add the non-member 404 |
+| `OrganizationRepositoryTest` (JPA slice) | `Organization` gets a factory | Use `Organization.create`; it still persists without an owner, which passes only because the test rolls back (deferred check never runs): say so in a comment |
+| `TaskflowSecurityIntegrationTest`, §3.0's four classes | Users who own organizations can't be deleted | Delete organizations first, or keep these classes organization-free (they are today) |
+
 ### Tests
 
 | Kind | Must prove |
@@ -609,6 +622,137 @@ join user_accounts u on u.username = o.created_by;
 | JPA slice | Owner invariant with `SET CONSTRAINTS ALL IMMEDIATE`: organization without owner fails; second owner fails immediately · `roleOf` returns empty for another organization's member |
 | Web slice | The gate: missing variable → 500, non-numeric → 404, non-member → 404 (mock `MembershipLookup`) |
 | Integration | Create → 201 + owner row · "mine" excludes others' organizations · non-member `GET /organizations/{A}` and `/members` → 404 identical to a random id's · member → 200 · owner deletion refused (an owner's account can't be deleted while it owns an organization: a JPA or SQL-level test) |
+
+### Built 2026-10-15 (Claude, at your request): what differs from the brief, and the evidence
+
+**Choices made while building** (none changes an API in the tables above):
+- `OrganizationRole.isAtLeast(required)` sits next to `isAbove`; `TenantContext.requireAtLeast` uses it.
+- The gate only gates **our controller methods** (a `HandlerMethod` whose bean is a `@Controller`): a path under `/organizations/{x}/` that no controller maps keeps its normal 404, and Spring's own handler methods pass. *(First built as `handler instanceof HandlerMethod`, which let through only non-`HandlerMethod` handlers; corrected 2026-10-16, see the `OPTIONS` row below.)*
+- The gate's 404 detail is the constant "Organization not found", with no id property: the "identical bar timestamp, correlation id and path" rule forbids an id in the detail.
+- "My organizations" default sort is `name` asc, `id` asc; its allowed sorts are `name`, `createdAt` and `id` (`PageableFactory` validates the default too, and the default names `id`). The members list maps `username` → `u.username` and `joinedAt` → `createdAt` before the query (Spring Data prefixes other names with the root alias: read in spring-data-jpa 3.5.13).
+- `TestUsers.deleteAll()` deletes organizations first (one place), instead of every class staying organization-free: classes share one database, so leftovers cross classes.
+- **Fix outside the brief:** `CommonErrorUtility.constraintNameOf` also reads raw `SQLException`s (deliberate failure 1 showed `constraint=null` for commit-time violations).
+- **Fix after review (2026-10-16): `OPTIONS /api/v1/organizations/{id}` was a 500 with an ERROR stack trace**, for any signed-in user, repeatable at will. No data leaked (the same 500 for every id), but it was a free way to fill the error log. Cause (*verified* in spring-webmvc 6.2.19): no controller maps `OPTIONS`, so `RequestMappingInfoHandlerMapping.handleNoMatch` answers with `new HandlerMethod(new HttpOptionsHandler(...))`; path variables are stored only by `handleMatch`, which never ran, so the gate saw a `HandlerMethod` with no `orgId` and failed closed. A CORS preflight never got this far (the security chain's `CorsFilter` answers it). Fix: gate every method of a `@Controller` bean and let Spring's own handler methods through. Skipping every `OPTIONS` request was rejected because an `OPTIONS` mapping we write ourselves would then be ungated. Now: 200 with `Allow: GET,HEAD,OPTIONS`, no membership lookup, and nothing about whether the organization exists (the same answer for every id).
+
+**Tests** (136 total, from 101; 18.6 s; still 2 Postgres containers):
+
+| Class | Kind | What it proves |
+|---|---|---|
+| `common/tenant/OrganizationRoleTest` | Unit (9 rows) | `isAbove` strict and `isAtLeast` inclusive, all 9 pairs |
+| `common/tenant/TenantContextTest` | Unit (5) | Enter then read; second `enter` throws and keeps the first; read before `enter` throws; `requireAtLeast` passes / 403 |
+| `common/tenant/TenantGateInterceptorTest` | Web slice (6), test-only probe controller | Member → 200 with the context filled; non-member → 404 with a constant detail; non-numeric → 404 without a lookup; a `{id}` handler → 500; a non-`AuthenticatedUser` principal → 500; a plain `OPTIONS` → 200 with `Allow`, no lookup |
+| `common/error/CommonErrorUtilityTest` | Unit (3) | Statement-time and commit-time violations both named; unrecognised → null |
+| `organization/OrganizationMembershipRepositoryTest` | JPA slice (5) | Ownerless org fails `SET CONSTRAINTS ALL IMMEDIATE` with `ck_organizations_has_owner`; with owner it passes; second owner refused at once; duplicate membership refused; `findRole` empty for another organization's member |
+| `organization/OrganizationApiIntegrationTest` | Integration (9) | Create → 201 `OWNER` + the row; duplicate slug 409; "mine" only, sorted by name; non-member `GET /{A}` and `/{A}/members` identical to `/999999999`; members = alice only, no `email`; `joinedAt` sort works, `email` sort is 400; `OPTIONS` on an organization → 200 with `Allow` through the real server; an owner's account can't be deleted |
+| Migrated | | `OrganizationControllerTest` (auth as `AuthenticatedUser`, `roleOf` stubbed, non-member 404 added), `OrganizationServiceTest` (owner membership saved), `OrganizationRepositoryTest` (factory + the rollback comment), `TaskflowSecurityConfigTest` (the two gate beans) |
+
+**Deliberate failures** (run in a scratch copy, deleted afterwards):
+
+| # | Observed |
+|---|---|
+| 1 | Before the fix: 409 `RESOURCE_CONFLICT` **without** `constraint`, 0 organization rows. After: 409 with `constraint: ck_organizations_has_owner`, 0 rows |
+| 2 | Gate on `/api/v1/organizations/**`: `GET` and `POST /api/v1/organizations` → **500**; two `TaskflowSecurityIntegrationTest` rows went red too |
+| 3 | Gate skipping a missing `orgId`: the `{id}` probe endpoint → **200** for anyone |
+| 4 | 403 for non-members: `403 FORBIDDEN` where the tests expect the 404 (slice, controller and HTTP) |
+| 5 | `@Async` method reading `TenantContext`: `ScopeNotActiveException` ("Scope 'request' is not active for the current thread") on `task-1`, wrapped in a `CompletionException` → 500 |
+
+**Mutations** (15 of 15 caught):
+
+| # | Planted | Went red | The failing assertion |
+|---|---|---|---|
+| 1 | Gate skips a missing `orgId` | `aHandlerWithoutAnOrgIdVariable_failsClosed_with500` | expected 500, was **200** |
+| 2 | 403 for non-members | gate, controller and integration non-member tests | expected 404, was **403** |
+| 3 | "Mine" without the caller in the `WHERE` | `myOrganizations_listsOnlyTheCallersOwn_sortedByName` | got `acme, globex, zeta` |
+| 4 | `create` without the owner membership | service test + every integration test that creates | "wanted but not invoked"; **409** instead of 201 |
+| 5 | `enter` allows a second call | `aSecondEnter_inTheSameRequest_throws_…` | no exception raised |
+| 6 | `isAbove` as `<=` | `OrganizationRoleTest` rows 1, 5, 9 (the diagonal) | expected false |
+| 7 | `requireAtLeast` inverted | both `requireAtLeast` tests | 403 thrown for ADMIN ≥ ADMIN; none for ADMIN < OWNER |
+| 8 | Members without the organization in the `WHERE` | `members_listsTheOrganizationsMembers_withoutEmails` | size 2, expected 1 |
+| 9 | Gate on `/organizations/**` | 10 integration tests | **500** instead of 200/201 |
+| 10 | Non-numeric id not mapped to 404 | `aNonNumericOrgId_isTheSame404_notA400` | expected 404, was **500** |
+| 11 | `findRole` without the organization in the `WHERE` | `findRole_…AnotherOrganizationsMember` | `OWNER` instead of empty |
+| 12 | The 404 detail carries the id | gate test + the whole-body comparison | "No organization 203" vs "No organization 999999999" |
+| 13 | `constraintNameOf` ignores raw `SQLException`s | `aCommitTimeViolation_isNamedFromTheRawSqlException` | expected the name, was null |
+| 14 | The gate as first built (`instanceof HandlerMethod` only) | `aPlainOptionsRequest_…`, `options_onAnOrganization_…` | expected 200, was **500** (`IllegalStateException: … has no {orgId} path variable`) |
+| 15 | The gate recognises no controller (checks `@Service` instead) | 4 of the 6 gate tests | the mis-named endpoint **200** to a stranger; non-member 500 instead of 404 |
+
+**Not proven yet:** the gate lookup's plan on real row counts (📊 owed, as before); your Postman run.
+
+**Review 2026-10-16 (read only, nothing run):**
+- ~~**Should fix: `OPTIONS` on any org-scoped path is a 500.**~~ **Fixed 2026-10-16** (see *Fix after review* above; re-reviewed the same day: the gate's predicate is exactly `RequestMappingHandlerMapping.isHandler`'s, and `HandlerMethod` stores the user class, so proxied controllers stay gated; both *read in 6.2.19 sources*). Original finding: Spring answers an `OPTIONS` that no controller maps with its own `HttpOptionsHandler`, wrapped in a `HandlerMethod` built in `RequestMappingInfoHandlerMapping.handleNoMatch`, which never calls `handleMatch`, so no path variables are stored (*read in spring-webmvc 6.2.19*). The gate sees a `HandlerMethod` with no `orgId` and fails closed: 500, plus an ERROR stack trace in the log. Any signed-in user can trigger it at will with a plain (non-CORS) `OPTIONS` (*predicted from the source, not run*). No data leaks (it fails closed, the same for every id). Fix: let through only Spring's own `OPTIONS` answer (the method is `OPTIONS` **and** no path variables were parsed); every other missing `orgId` stays a 500. Test: a slice `options("/api/v1/organizations/42")` → 200 with an `Allow` header, `MembershipLookup` never called; plus the existing `{id}` test still 500.
+- Nits: the commented-out `findRoleByOrganizationIdAndUserAccountId` in `OrganizationMembershipRepository` (dead code) · a concurrent duplicate slug still surfaces as the generic 409 `RESOURCE_CONFLICT` (`constraint: uk_organizations_slug`) instead of `DUPLICATE_SLUG` (pre-existing; registration's `saveAndFlush` + catch pattern would map it) · `OrganizationRole`'s rule rests on declaration order: a role inserted in the wrong place silently changes who outranks whom (the 9-pair test catches it only if it's extended) · `CommonErrorUtility` builds a whole `PostgreSQLDialect` to borrow its extractor (works; ties `common/error` to the database vendor, acceptable here).
+- **Re-review of the fix (2026-10-16): one test owed.** The reason this fix beats "skip every `OPTIONS`" is that an `OPTIONS` mapping *we* write stays gated, but no test pins it: change the gate to skip all `OPTIONS` and every current test stays green. Add a probe method mapped with `@RequestMapping(method = RequestMethod.OPTIONS)` under `/{orgId}/…` and assert a non-member gets the 404.
+- Docs: the Phase 3 implementation reference (Definition of done) doesn't exist yet; `PROJECT_CONTEXT.md` §9 still says you implement §3.1.
+
+### Run it (Postman; written 2026-10-16)
+
+**0. Start and check V7** (IntelliJ, `dev` profile; Database tool window in **Auto-commit** mode)
+
+```sql
+select version, success from flyway_schema_history order by installed_rank desc limit 1;   -- 7, true
+select o.slug, u.username, m.role from organization_memberships m
+  join organizations o on o.id = m.organization_id join user_accounts u on u.id = m.user_account_id;
+-- expected: demo-org9 | alice | OWNER  and  demo-org98 | abhinavvgargg-jwt | OWNER  (the 4 'system' orgs: no row)
+```
+
+**1. Postman setup**: one collection, *TaskFlow 3.1*. Collection variables: `base` = `http://localhost:8080`, `password` = `p31-password-123`, and empty `aliceToken`, `bobToken`, `carolToken`, `acmeId`, `globexId`, `notMemberBody`. Every org request sets `Authorization: Bearer {{…Token}}` (Authorization tab → Bearer Token). The cookie jar doesn't matter here (no refresh in §3.1).
+
+**2. Users** (once). `POST {{base}}/api/v1/auth/register` three times, body `{"email":"p31alice@example.com","username":"p31alice","displayName":"P31 Alice","password":"{{password}}"}` (then `p31bob`, `p31carol`) → **201** each. Verify them by SQL instead of copying three links from the console:
+
+```sql
+update user_accounts set email_verified_at = now() where username in ('p31alice','p31bob','p31carol');   -- 3 rows
+```
+
+`POST {{base}}/api/v1/auth/login` `{"email":"p31alice@example.com","password":"{{password}}"}` → **200**; Post-response script: `pm.collectionVariables.set("aliceToken", pm.response.json().accessToken);` Same for bob (`bobToken`) and carol (`carolToken`). Tokens live 15 minutes: re-send the three logins if anything turns 401 `INVALID_ACCESS_TOKEN`.
+
+**3. The run.** Watch the IntelliJ console: every request under `/organizations/{id}` logs one `select … role … from organization_memberships` (the gate) before anything else.
+
+| # | As | Request | Expected | Proves |
+|---|---|---|---|---|
+| 1 | alice | `POST /api/v1/organizations` `{"name":"P31 Acme","slug":"p31-acme"}`; script: `pm.collectionVariables.set("acmeId", pm.response.json().id);` | **201**, `role: "OWNER"`, `createdBy: "p31alice"`, `Location: …/organizations/{id}` | Creating makes you the owner |
+| 2 | alice | same request again | **409** `DUPLICATE_SLUG`, `slug: "p31-acme"` | Unchanged slug rule |
+| 3 | bob | `POST /api/v1/organizations` `{"name":"P31 Globex","slug":"p31-globex"}`; save `globexId` | **201** `OWNER` | |
+| 4 | alice | `GET /api/v1/organizations` | **200**, `content` = only `p31-acme`, `role: "OWNER"` | "Mine" only (it used to list all) |
+| 5 | bob | `GET /api/v1/organizations` | only `p31-globex` | |
+| 6 | alice | `GET /api/v1/organizations/{{acmeId}}` | **200**, `role: "OWNER"` | Member passes the gate |
+| 7 | bob | `GET /api/v1/organizations/{{acmeId}}`; script (strip and keep the body): `const b = pm.response.json(); ["timestamp","correlationId","instance"].forEach(k => delete b[k]); pm.collectionVariables.set("notMemberBody", JSON.stringify(b));` | **404** `ORGANIZATION_NOT_FOUND`, `detail: "Organization not found"` | Non-member = not found |
+| 8 | bob | `GET /api/v1/organizations/999999999`; script: same strip, then `pm.test("same as not-a-member", () => pm.expect(JSON.stringify(b)).to.eql(pm.collectionVariables.get("notMemberBody")));` | **404**, test passes | No existence oracle |
+| 9 | bob | `GET /api/v1/organizations/abc` (same test script) | **404**, test passes (not a 400) | Non-numeric is the same miss |
+| 10 | alice | `GET /api/v1/organizations/{{acmeId}}/members` | **200**, one member `p31alice` `OWNER`, `joinedAt`, **no `email`** | Members list |
+| 11 | bob | `GET /api/v1/organizations/{{acmeId}}/members` | **404** `ORGANIZATION_NOT_FOUND` | Gate covers sub-paths |
+| 12 | — | SQL: add carol as a MEMBER (below) | 1 row | No invitations until §3.3 |
+| 13 | carol | `GET /api/v1/organizations` and `GET /api/v1/organizations/{{acmeId}}` | acme with `role: "MEMBER"`; **200** `MEMBER` | Role comes from the membership |
+| 14 | alice | `GET …/{{acmeId}}/members` then `?sort=joinedAt,desc` | `p31alice, p31carol` (username asc); then `p31carol` first | Default and joined sort |
+| 15 | alice | `GET …/{{acmeId}}/members?sort=email` · `GET /api/v1/organizations?sort=slug` | **400** `INVALID_SORT_PROPERTY` both | Sort allow-lists |
+| 16 | — | SQL: remove carol (below), then carol repeats `GET /api/v1/organizations/{{acmeId}}` **with the same token** | **404** | Membership read per request (D3): removal acts on the next request, no new token needed |
+| 17 | alice, bob | `OPTIONS {{base}}/api/v1/organizations/{{acmeId}}` (no `Origin` header) | **200** both, `Allow: GET,HEAD,OPTIONS`, empty body, no gate query in the log | The review fix; same answer for a non-member |
+| 18 | nobody | `GET /api/v1/organizations/{{acmeId}}` with Auth = *No Auth* | **401** `AUTHENTICATION_REQUIRED` | Security chain before the gate |
+| 19 | alice | `GET /api/v1/organizations/602` (a `system`-created legacy org) | **404** | Ownerless legacy orgs are unreachable |
+
+```sql
+-- 12: carol joins acme as a MEMBER (replace 123 with {{acmeId}})
+insert into organization_memberships (id, organization_id, user_account_id, role, created_at, updated_at, created_by, updated_by)
+select nextval('global_id_seq'), 123, id, 'MEMBER', now(), now(), 'manual', 'manual' from user_accounts where username = 'p31carol';
+-- 16: carol leaves (by hand, until §3.2's endpoint exists)
+delete from organization_memberships where organization_id = 123 and user_account_id = (select id from user_accounts where username = 'p31carol');
+```
+
+**4. The database invariants** (Auto-commit on, so each statement commits and the deferred trigger runs at its end; replace 123):
+
+| # | SQL | Expected |
+|---|---|---|
+| 20 | `delete from organization_memberships where organization_id = 123 and role = 'OWNER';` | `ERROR: organization 123 violates check constraint "ck_organizations_has_owner"`; the row is still there |
+| 21 | `insert into organization_memberships (id, organization_id, user_account_id, role, created_at, updated_at) select nextval('global_id_seq'), 123, id, 'OWNER', now(), now() from user_accounts where username = 'p31bob';` | `duplicate key … "uk_organization_memberships_one_owner"` |
+| 22 | `delete from user_accounts where username = 'p31alice';` | `ck_organizations_has_owner` (the cascade fired the trigger); alice still exists |
+| 23 | `update organization_memberships set role = 'GOD' where organization_id = 123;` | `ck_organization_memberships_role` |
+
+If the console is in **manual-commit** mode, 20 and 22 succeed at the statement and fail at **Commit**: that's the deferred trigger, and seeing it once is worth it.
+
+**5. Report back**: rows that differed (status and body), and whether the console showed one gate query per org-scoped request.
+
+✅ **Reported 2026-10-16: all 23 rows passed as expected** (the console's one-gate-query check wasn't reported separately). Dev DB now at **V7**.
+
+**Clean up afterwards (optional):** `delete from organizations where slug in ('p31-acme','p31-globex');` then `delete from user_accounts where username like 'p31%';` (organizations first, or 22's error comes back).
 
 ---
 
@@ -1235,18 +1379,18 @@ And the positive pair for each: bob gets 200/201/204 on his own.
 
 - [x] D1–D8 decided and recorded with dates. (2026-10-13)
 - [x] (D1 = A) §3.0's 11 tests green and mutation-checked; suite count and time recorded. (2026-10-13: 18 tests, 14/14 mutations; 101 tests, 14 s, 2 containers)
-- [ ] Creating an organization makes the caller its owner; nothing can commit an organization without exactly one owner.
-- [ ] `GET /organizations` lists only the caller's organizations.
-- [ ] Every org-scoped request passes the gate; non-members get the same 404 as for a non-existent organization.
+- [x] Creating an organization makes the caller its owner; nothing can commit an organization without exactly one owner. (§3.1: tests + your run, rows 1 and 20–22, 2026-10-16)
+- [x] `GET /organizations` lists only the caller's organizations. (§3.1: tests + your run, rows 4–5)
+- [x] Every org-scoped request passes the gate; non-members get the same 404 as for a non-existent organization. (§3.1: tests + your run, rows 7–9, 11, 16)
 - [ ] D6's matrix holds for all three roles; transfer requires the password and swaps roles atomically.
 - [ ] Invitations: invite, list, revoke, my invitations, accept, decline; another user's invitation id → 404; expired ones can't be accepted.
 - [ ] Projects: unique key per organization; another tenant's project id → 404 through `findById`.
 - [ ] The isolation matrix passes and every mutation above turns it red.
 - [ ] Login, refresh, reset and the per-request session check still work with the tenant resolver registered.
 - [ ] (Side task) Profile GET/PATCH; README current.
-- [ ] Existing organization tests migrated, not disabled; cleanup deletes organizations before users.
+- [x] Existing organization tests migrated, not disabled; cleanup deletes organizations before users. (§3.1)
 - [ ] `PROJECT_CONTEXT.md` §2.1 (invitations, per D7) and §5 (Phase 3/4 rows, per D8) match what was built.
-- [ ] Learning log and implementation reference created for Phase 3; small commits, one per sub-section, staged by file name.
+- [ ] Learning log and implementation reference created for Phase 3; small commits, one per sub-section, staged by file name. *(Learning log since 2026-10-13, implementation reference since 2026-10-16; commits: §3.0 `ec5acad`, §3.1 pending.)*
 
 ---
 
