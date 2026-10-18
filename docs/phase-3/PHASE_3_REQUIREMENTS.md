@@ -4,13 +4,14 @@
 > **Time-box: 8h, tests included. Hard stop at 12h (150%).** The carried test debt is not in it (D1 gives it its own budget). Anything unfinished becomes a side task in Phase 4.
 > You run the app from IntelliJ and call the API with Postman; run steps come after each sub-section is built, in Postman form (one collection per user: alice, bob, carol).
 
-## ▶ Where we are (resume here) — §3.1 done 2026-10-16 (not yet committed); §3.2 next
+## ▶ Where we are (resume here) — §3.2 built 2026-10-18 (not committed); §3.3 next
 
 | | |
 |---|---|
 | **Done** | Phase 2 closed 2026-10-12; §2.4 + §2.5 committed (`b6f3dde`). **§3.0** (2026-10-13, committed `ec5acad`): 18 Tier-1 tests + infrastructure, written by Claude at your request; all 14 mutations caught; suite 101 tests, 14 s, 2 containers. This brief: D1–D8 raised, §3.0–§3.7 written, V7–V9 SQL **verified on a scratch copy of your dev database** (2026-10-13; `taskflow_scratch_p3`, dropped afterwards; your dev DB untouched, still at V6). |
 | **§3.1** | ✅ **Done 2026-10-16: your Postman run passed all 23 rows.** Built 2026-10-15, code and tests written by Claude at your request, in the build order. Suite **136 tests, 0 failures, 18.6 s, 2 containers**; 15 of 15 mutations caught; deliberate failures 1–5 observed (results at the end of §3.1). Two gaps found and fixed: a commit-time violation's 409 had no constraint name (`CommonErrorUtility`); a plain `OPTIONS` on an org path was a 500 (review finding, 2026-10-16: the gate now gates only `@Controller` methods). |
-| **Next** | 1. **Commit §3.1** (code, V7, tests, docs; staged by name). 2. Your 15-minute Phase 1 and Phase 2 notes (both templates still empty). 3. **§3.2** (roles, removal, leave, transfer), and as you pass: the owed test (an `OPTIONS` mapping we write must stay gated) and the commented-out `findRoleByOrganizationIdAndUserAccountId` (end of §3.1). |
+| **§3.2** | **Built 2026-10-18.** You started it (request records, error codes, re-authentication extracted, change role) and fixed the review's two must-fix items; Claude, at your request, applied the rest of the review and built remove, leave and transfer, plus all of §3.2's tests. Suite **223 tests, 0 failures, 23.2 s, 2 containers**; 15 of 15 mutations caught (after one test was strengthened); deliberate failures 1–5 observed. Details at the end of §3.2. |
+| **Next** | 1. **Read §3.2's code and tests**, then run the §3.2 Postman steps (alice, adam, mia). 2. Commit §3.2 (staged by name). 3. Your 15-minute Phase 1 and Phase 2 notes. 4. **§3.3** (invitations, V8). |
 | **Decisions to raise** | None open. D1–D8 all decided 2026-10-13 (the recommendations), so V7–V9 stand as written. OpenAPI moved to Phase 11 (the proposal, taken with the recommendations). |
 | **Debt** | Test debt: **Tier 1 paid** (§3.0); Tier 2 → Phase 11 (list in §3.0 *Out*). Phase 2's `prod`-without-key done-item: **proven** (`JwtKeyConfigTest`). README → §3.5. Nits: *Carried in*. |
 | **Environment state** | Dev DB at **V7** (applied 2026-10-16 by your app start; backfill: `demo-org9` → alice, `demo-org98` → `abhinavvgargg-jwt`; the 4 `system` organizations stay ownerless and unreachable). Your Postman run may have left `p31…` users and organizations (cleanup SQL at the end of §3.1 *Run it*). The dev signing key is ephemeral. |
@@ -783,6 +784,10 @@ The service first **reads** the target's current role (404 if not a member: the 
 
 **Ownership transfer** (`POST /organizations/{orgId}/ownership-transfer {userId, currentPassword}`): owner only; re-authenticates the caller with their current password (Phase 1's path: email loaded by id, the `AuthenticationManager`, a wrong password counts toward lockout); then step 1 and step 2 in one transaction, **in that order**: the one-owner index is immediate (*verified*: promote-first fails), the at-least-one trigger is deferred (*verified*: the zero-owner moment between them is allowed).
 
+**The order of checks for a transfer** *(added 2026-10-16 at §3.2's start; my brief left it open)*: (1) caller is OWNER (`requireAtLeast(OWNER)`: cheap, and a member's wrong password then never counts toward their lockout), (2) target isn't the caller (400), (3) the password, **outside any transaction**, in a non-transactional workflow method (the `PasswordWorkflow` shape: bcrypt takes ~100 ms on purpose and must not hold a database connection while it runs), (4) the transactional service: step 1, step 2. The gate's role was read at the start of the request; step 1's `AND role = 'OWNER'` re-checks it in the database, which is what decides two concurrent transfers.
+
+**What a same-role change does** *(added 2026-10-16)*: `PATCH` with the member's current role is a **no-op: 200 with the member, no write** (so `updated_by` doesn't claim a change nobody made). The rule still runs first, so a no-op is only possible for someone allowed to make it: an admin can send `MEMBER` → `MEMBER` and get 200, and every *real* change by an admin is a 403, which is what D6's matrix means by "❌".
+
 #### The choices
 
 | Choice | Problem it solves | What it avoids |
@@ -793,6 +798,8 @@ The service first **reads** the target's current role (404 if not a member: the 
 | **Transfer demotes first, then promotes** | Satisfies the immediate one-owner index | 409 on every transfer |
 | **Transfer requires the current password** | A stolen 15-minute access token can't hand the organization to the attacker | "Session hijack = permanent org takeover"; Phase 2 rule A1: judge by the attacker's copy |
 | **Re-authentication extracted once in `user` and reused** by change-password and transfer | One implementation that counts toward lockout | Two re-auth paths, one of which forgets the lockout listener |
+| **`role` in the request is a `String` with `@NotNull @Pattern(regexp = "ADMIN\|MEMBER")`, converted in the service** *(added 2026-10-16)* | `OWNER`, `GOD`, `admin` all get the same 400 `VALIDATION_FAILED` with `field: role` | An `OrganizationRole` field: `OWNER` deserialises fine and reaches the service, and `GOD` is a JSON parse error, answered as 400 `BAD_REQUEST` with no field (`GlobalExceptionHandler` doesn't override `handleHttpMessageNotReadable`; read 2026-10-16) |
+| **The 200 for a role change is read back with a projection query after the update** | The response shows the stored row | Building it from an entity loaded earlier: a bulk `UPDATE` doesn't refresh entities already in the persistence context |
 | **Leave is its own endpoint (`/members/me`)** | "Strictly below" forbids acting on yourself; leaving is the one self-action | Special-casing "target == caller" inside remove |
 | **Removed member: 404 on their next org request** | The gate reads memberships per request | A removed admin still acting for 15 minutes |
 
@@ -819,20 +826,30 @@ The service first **reads** the target's current role (404 if not a member: the 
 
 #### Re-authentication (`user`)
 
-- [ ] One method re-authenticates an account id with a password through the `AuthenticationManager` (email loaded by id) and is used by change-password and by transfer.
-- [ ] A wrong password → 400 `CURRENT_PASSWORD_INCORRECT` with `field: currentPassword`, counted toward lockout (Phase 1's change-password behaviour, unchanged).
+- [x] One method re-authenticates an account id with a password through the `AuthenticationManager` (email loaded by id) and is used by change-password and by transfer.
+- [x] It's called outside any transaction (a non-transactional workflow method), never inside the transfer's transaction.
+- [x] A wrong password → 400 `CURRENT_PASSWORD_INCORRECT` with `field: currentPassword`, counted toward lockout (Phase 1's change-password behaviour, unchanged).
 
 #### `MembershipService` (`organization`)
 
-- [ ] `changeRole(targetUserId, newRole)`: OWNER only in practice (the rule); target and new role strictly below the caller; else 403 `CANNOT_MANAGE_MEMBER`.
-- [ ] `remove(targetUserId)`: target strictly below the caller; else 403 `CANNOT_MANAGE_MEMBER`.
-- [ ] `leave()`: the owner gets 409 `OWNER_CANNOT_LEAVE`.
-- [ ] `transferOwnership(targetUserId, currentPassword)`: caller must be OWNER (403 otherwise); password re-checked; demote, then promote, in one transaction.
-- [ ] A target who isn't a member → 404 `MEMBER_NOT_FOUND` (the target's id from another organization is "not a member": same 404).
-- [ ] Each statement's 0-row result maps to the error in the table above; none loads an entity to change it.
-- [ ] Each statement sets `updated_at` (the injected `Clock`) and `updated_by` (the caller's username).
+- [x] `changeRole(targetUserId, newRole)`: OWNER only in practice (the rule); target and new role strictly below the caller; else 403 `CANNOT_MANAGE_MEMBER`.
+- [x] A change to the member's current role returns 200 without writing anything.
+- [x] The 200's body is read with a projection query after the update.
+- [x] `remove(targetUserId)`: target strictly below the caller; else 403 `CANNOT_MANAGE_MEMBER`.
+- [x] `leave()`: the owner gets 409 `OWNER_CANNOT_LEAVE`.
+- [x] `transferOwnership(targetUserId, currentPassword)`: caller must be OWNER (403 otherwise); password re-checked; demote, then promote, in one transaction.
+- [x] Checks run in this order: OWNER (403) → not yourself (400 `CANNOT_TRANSFER_TO_SELF`, `field: userId`) → password (400 `CURRENT_PASSWORD_INCORRECT`) → the transaction.
+- [x] A target who isn't a member → 404 `MEMBER_NOT_FOUND` (the target's id from another organization is "not a member": same 404).
+- [x] Each statement's 0-row result maps to the error in the table above; none loads an entity to change it.
+- [x] Each statement sets `updated_at` (the injected `Clock`) and `updated_by` (the caller's username).
 
 **Done when:** after alice transfers Acme to carol, alice is ADMIN and carol is OWNER; alice's next `POST /ownership-transfer` → 403.
+
+#### Request records (`organization`)
+
+- [x] `ChangeRoleRequest(role)`: `@NotNull @Pattern(regexp = "ADMIN|MEMBER") String role`.
+- [x] `TransferOwnershipRequest(userId, currentPassword)`: `@NotNull Long userId`, `@NotBlank @MaxUtf8Bytes(72) String currentPassword` (as `ChangePasswordRequest`), and a `toString()` that hides the password.
+- [x] `OrganizationErrorCode` gains `MEMBER_NOT_FOUND` (404), `CANNOT_MANAGE_MEMBER` (403), `MEMBERSHIP_CHANGED` (409), `OWNER_CANNOT_LEAVE` (409), `CANNOT_TRANSFER_TO_SELF` (400).
 
 #### `MemberController`
 
@@ -841,7 +858,7 @@ The service first **reads** the target's current role (404 if not a member: the 
 | PATCH | `/api/v1/organizations/{orgId}/members/{userId}` | `{role: "ADMIN" \| "MEMBER"}` | **200** `{userId, username, displayName, role, joinedAt}` | 400 `VALIDATION_FAILED` (incl. `OWNER`) · 403 `CANNOT_MANAGE_MEMBER` · 404 `ORGANIZATION_NOT_FOUND` / `MEMBER_NOT_FOUND` · 409 `MEMBERSHIP_CHANGED` |
 | DELETE | `/api/v1/organizations/{orgId}/members/{userId}` | — | **204** | 403 `CANNOT_MANAGE_MEMBER` (incl. yourself: use `/members/me`) · 404 · 409 `MEMBERSHIP_CHANGED` |
 | DELETE | `/api/v1/organizations/{orgId}/members/me` | — | **204** | 404 `ORGANIZATION_NOT_FOUND` · 409 `OWNER_CANNOT_LEAVE` |
-| POST | `/api/v1/organizations/{orgId}/ownership-transfer` | `{userId, currentPassword}` | **204** | 400 `VALIDATION_FAILED` (incl. yourself as target) / `CURRENT_PASSWORD_INCORRECT` · 403 `ORGANIZATION_ROLE_REQUIRED` · 404 `MEMBER_NOT_FOUND` · 409 `MEMBERSHIP_CHANGED` |
+| POST | `/api/v1/organizations/{orgId}/ownership-transfer` | `{userId, currentPassword}` | **204** | 400 `VALIDATION_FAILED` / `CANNOT_TRANSFER_TO_SELF` (`field: userId`) / `CURRENT_PASSWORD_INCORRECT` (`field: currentPassword`) · 403 `ORGANIZATION_ROLE_REQUIRED` · 404 `MEMBER_NOT_FOUND` · 409 `MEMBERSHIP_CHANGED` |
 
 **Done when:** every row of D6's matrix gives its status for OWNER, ADMIN and MEMBER callers; a removed member's next `GET /organizations/{A}` → 404.
 
@@ -851,6 +868,9 @@ The service first **reads** the target's current role (404 if not a member: the 
 - **`DELETE …/members/me` vs `…/members/{userId}`**: Spring prefers the literal segment over the variable (path-pattern specificity), so `me` never reaches `{userId}`; but a `Long` `userId` receiving `me` would be a 400, so keep the literal mapping and test it.
 - **The password in the transfer request body**: mask it in the request record's `toString()` (Phase 1: request records print every component).
 - **Reading the role, then deciding, then writing** is check-then-act *unless* the write repeats the read value in its `WHERE`. Without `AND role = :expectedCurrent`, the race is back.
+- **An enum-typed `role` field** splits one mistake into two answers: `GOD` → a parse error (400 `BAD_REQUEST`, no field), `OWNER` → accepted and passed to the service. Validate a `String` instead.
+- **bcrypt inside the transfer's transaction** holds a pooled connection for ~100 ms per request (the dev pool has 5): five slow transfers and every other request waits for a connection. Re-authenticate before the transaction starts.
+- **Re-authentication resets the failure counter on success** (Phase 1's listener reacts to the password principal), exactly like change-password. Expected; just don't be surprised when a correct transfer password clears earlier failed logins.
 - **A transfer to yourself** looks like a success: step 1 demotes you to `ADMIN`, then step 2's `role <> 'OWNER'` matches **you** and promotes you back, so it returns 204 having done nothing. Reject `targetUserId == caller` with 400 before anything runs.
 
 ### Deliberate failures
@@ -865,6 +885,7 @@ The service first **reads** the target's current role (404 if not a member: the 
 
 ### Build order
 
+0. **Before any code:** commit §3.1. Then the two items owed from its review: the test that an `OPTIONS` mapping we write stays gated, and delete the commented-out `findRoleByOrganizationIdAndUserAccountId`.
 1. Extract re-authentication; change-password still works (§3.0's tests 7 prove it, if D1 = A).
 2. Change role and remove. → *Deliberate failures 3, 4, 5.*
 3. Leave.
@@ -874,9 +895,104 @@ The service first **reads** the target's current role (404 if not a member: the 
 
 | Kind | Must prove |
 |---|---|
-| Unit | The rule: every (actor, target, new role) combination of the matrix |
+| Unit | The rule: every (actor, target, new role) combination of the matrix, including the admin's same-role no-op |
+| Web slice | `role: "OWNER"`, `"GOD"`, `"admin"` → 400 `VALIDATION_FAILED` with `field: role`; the transfer request's `toString()` has no password |
 | Integration | The matrix for three callers · removed member → 404 next request · transfer: roles swapped, old owner 403 on a second transfer, wrong password 400 and nothing changed, yourself as target 400 · transfer to a non-member → 404, nothing changed · owner leave → 409 · `/members/me` doesn't reach `{userId}` · a member of B as target in A → 404 |
 | Integration (parallel) | Two transfers by the same owner to different members at once → exactly one 204, one 409; exactly one owner afterwards |
+
+### Review 2026-10-18: change role (read only, nothing run)
+
+**Status 2026-10-18:** must-fix 1 and 2 fixed by you; should-fix 3–5 and every nit done by Claude at your request (details in *Built 2026-10-18* below). §3.1's two owed items closed: the `OPTIONS`-mapping test is in `TenantGateInterceptorTest` (and caught "skip every `OPTIONS`", mutation 14), the commented-out `findRoleByOrganizationIdAndUserAccountId` is gone.
+
+**Must fix**
+1. **Every `PATCH` will be a 500.** `changeRole` binds `String` values (`"ADMIN"`) to `:newRole` and `:expectedCurrent`, whose types Hibernate infers from the `role` attribute (`OrganizationRole`). Hibernate 6.6.53 coerces through the parameter's `JavaType`; `EnumJavaType` doesn't override `coerce`, so the `String` reaches `QueryParameterBindingValidator`, where `isInstance` fails → `QueryArgumentException` ("Argument [ADMIN] of type [java.lang.String] did not match parameter type […OrganizationRole]") → the catch-all 500 (*read in the source; predicted, not run*). Fix: convert once in the service (`OrganizationRole.valueOf`, safe after `@Pattern`) and type the repository parameters as `OrganizationRole`.
+2. **The target's current role is never checked against the caller.** Only `caller.isAbove(newRole)` and "caller is OWNER" are checked. The owner targeting themselves (`PATCH /members/{ownId} {"role":"ADMIN"}`) passes both; the `UPDATE … where role = 'OWNER'` changes 1 row, and only V7's deferred trigger stops it at commit: 409 `RESOURCE_CONFLICT` with `constraint: ck_organizations_has_owner` instead of 403 `CANNOT_MANAGE_MEMBER` (*predicted*). The database saved the invariant; the API's answer is wrong. Fix: the rule is two comparisons: the **target's current role** and the **new role** must both be strictly below the caller's.
+
+**Should fix**
+3. A same-role change writes (`updated_by`/`updated_at` change for nothing); the brief says 200 with no write.
+4. Two hand-written permission checks with copy-pasted messages: `verifyAndGetTargetUserMembership` says "requires the OWNER role" when the real reason is "the new role isn't below yours", and the explicit OWNER check uses `CANNOT_MANAGE_MEMBER` + `requiredRole` instead of `TenantContext.requireAtLeast` (which answers `ORGANIZATION_ROLE_REQUIRED`). With fix 2, the rule alone already makes role changes owner-only for every real change; keep `requireAtLeast(OWNER)` only if you'd rather admins get 403 even for a no-op (then the brief's no-op line changes: your call).
+5. The response is assembled from the request's role, the pre-update entity's `createdAt` and a full `UserAccount` load (`findById` loads the password hash for nothing), in a new `ChangeRoleResponse` that duplicates `MemberResponseDto` with `role` as a `String`. The brief: read it back with a projection after the update (one query, the stored row, the same DTO as the list).
+
+**Nits**
+- `import org.aspectj.weaver.ast.Or;` (an IDE auto-import from AspectJ's internals; unused) and unused `Optional`; `PasswordWorkflow` keeps now-unused imports (`AuthenticationManager`, `BadCredentialsException`, …).
+- The membership is loaded as an **entity** to read its role; after the bulk `UPDATE` that entity still says the old role in this persistence context. Harmless today (only `createdAt` is read), a trap tomorrow: `findRole` (scalar) avoids it.
+- `verifyAndGetTargetUserMembership` is `public` and takes `orgId` as a parameter: a second way to name the organization (A4 says one source). Make it private and read the context inside.
+- `updatedBy` comes from `SecurityContextHolder…getName()` (correct: our token's name is the username), while `create` receives the caller explicitly: pass `AuthenticatedUser` the same way (testable without a security context).
+- `MEMBER_NOT_FOUND`'s detail formats both ids into the text; prefer a constant detail and `.with("userId", …)`.
+- `AuthenticationUtil`: a stateful component named "Util"; `Reauthentication` (or `PasswordConfirmation`) says what it is. Its `catch (Exception e)` + `instanceof` is Phase 1's carried nit: `catch (BadCredentialsException | LockedException e)` now that it's being moved anyway.
+- No tests for §3.2 yet; §3.1's two owed items (the `OPTIONS` mapping test, the commented-out `findRoleByOrganizationIdAndUserAccountId`) still open.
+
+### Built 2026-10-18 (you started it; Claude finished it at your request): what changed, and the evidence
+
+**The review's remaining points, as done:**
+- **3 (no-op):** `changeRole` skips the write when the role is unchanged (`currentRole != newRole && …`), after the rule ran.
+- **4 (one rule):** the rule lives in `OrganizationRole`: `mayChangeRole(target, new)` = `isAbove(target) && isAbove(new)`, `mayRemove(target)` = `isAbove(target)`. The extra "caller is OWNER" check is gone: with both comparisons, only the owner can make a real role change, and an admin's no-op stays a 200, as the brief says. Each 403 says why ("only members below you, to a role below yours").
+- **5 (response):** `ChangeRoleResponse` deleted; the 200 is `MemberResponseDto`, read back with the new `findMember` projection after the update.
+- **Nits:** the entity lookup (`findByOrganizationIdAndUserAccountId`) is gone, roles are read with the scalar `findRole`; no public helper takes `orgId` (the service reads `TenantContext`); `updated_by` comes from the `AuthenticatedUser` passed in by the controller; `MEMBER_NOT_FOUND` has a constant detail and `userId` as a property; `AuthenticationUtil` → **`Reauthentication.confirmPassword`** with `catch (BadCredentialsException | LockedException e)`; `PasswordWorkflow`'s unused imports removed; `MEMBERSHIP_CHANGED`'s title is "Membership changed".
+
+**What was built** (all in `organization` unless named):
+- `OrganizationMembershipRepository`: `findMember` (projection), `changeRole`, `remove`, `leave`, `demoteOwner`, `promoteToOwner`. Every `WHERE` names the organization and repeats what the service decided on; each `UPDATE` sets `updated_at` and `updated_by`; all `@Modifying(flushAutomatically = true)`.
+- `MembershipService`: `changeRole`, `remove`, `leave`, `transferOwnership` (transactional, demote then promote).
+- **`MembershipWorkflow`** (new, not transactional): the transfer's order of checks: `requireAtLeast(OWNER)` → not yourself (400 `CANNOT_TRANSFER_TO_SELF`, `field: userId`) → `Reauthentication` (bcrypt, outside any transaction) → the service's transaction.
+- `MemberController` is now mapped at `/api/v1/organizations/{orgId}` and holds every member endpoint: `GET /members`, `PATCH` and `DELETE /members/{userId}`, `DELETE /members/me`, `POST /ownership-transfer`.
+- **`leave` answers a removed-meanwhile caller with 404 `ORGANIZATION_NOT_FOUND`** (0 rows and no membership left); 0 rows with a membership left is the owner → 409 `OWNER_CANNOT_LEAVE`.
+
+**Tests** (223 total, from 136; 23.2 s; still 2 Postgres containers):
+
+| Class | Kind | What it proves |
+|---|---|---|
+| `common/tenant/OrganizationRoleTest` | Unit (+27 rows) | `mayChangeRole` for all 18 (caller, target, new role) combinations; `mayRemove` for all 9 |
+| `organization/MembershipServiceTest` | Unit (11) | Writes with the role it read, then reads back; the no-op writes nothing; 403 for the rule, including the owner targeting themselves; 409 for 0 rows; 404 for a non-member; leave's 409 vs 404; transfer demotes before promoting, 409 when no longer owner, 404 for a non-member |
+| `organization/MembershipWorkflowTest` | Unit (5) | Owner check before the password (a member's wrong password never counts); self before the password; wrong password stops the transfer; password then transaction; `toString` hides the password |
+| `organization/MemberControllerTest` | Web slice (8) | `OWNER`, `GOD`, `admin`, `""` and a missing role → 400 `VALIDATION_FAILED` on `role`; a valid role reaches the service; `DELETE /members/me` is leave, never remove; a transfer without a user id or password → 400 |
+| `organization/OrganizationMembershipRepositoryTest` | JPA slice (+3) | Every conditional statement matches 0 rows with a stale role or another organization's member (a plain member and an owner); 1 row when its assumption holds; promote-before-demote hits the one-owner index |
+| `organization/MembershipManagementIntegrationTest` | Integration (32) | D6's matrix for owner, admin, member (22 rows); the stored row and `updated_by` after a change; the no-op leaves `updated_by` alone; a removed member's next request → 404; `/members/me` removes only the caller; members of another organization (an owner and a plain member) → 404 for change, remove and transfer, nothing changed; transfer swaps roles and the old owner's next transfer → 403; wrong password → 400, nothing changed, counted toward lockout; yourself → 400 on `userId`; **two transfers at once → exactly one 204, the other 409 or 403, exactly one owner** (passed 5 repeated runs) |
+| `common/tenant/TenantGateInterceptorTest` | Web slice (+1) | §3.1's owed test: an `OPTIONS` mapping of our own stays gated (non-member → 404) |
+
+Why the race test accepts 409 **or** 403 for the loser: if both requests pass the gate before either transaction commits, step 1's `AND role = 'OWNER'` decides (409); if the winner commits before the loser even reaches the gate, the gate already sees an admin (403). Both are correct refusals; two 204s, two owners or a 500 are not.
+
+**Deliberate failures** (in a scratch copy, deleted afterwards):
+
+| # | Observed |
+|---|---|
+| 1 | Promote before demote: **409 `RESOURCE_CONFLICT`, `constraint: uk_organization_memberships_one_owner`** on every transfer |
+| 2 | Step 2's 0 rows ignored, transfer to a Globex member: **409 `RESOURCE_CONFLICT`, `constraint: ck_organizations_has_owner`** (at commit); alice still OWNER, one owner. The right answer, 404, needs the row count |
+| 3 | The race (transfer to adam + demote adam at once) **never hit the window naturally** (25 runs with a 0–240 ms sweep: the demote finished first, or came after the transfer and got 403). Widened in the scratch copy with a 300 ms pause between the role read and the `UPDATE`: with the expected role in the `WHERE` → **409 `MEMBERSHIP_CHANGED`** (6 of 6); without it → **409 `RESOURCE_CONFLICT` / `ck_organizations_has_owner`** (6 of 6): the demote overwrote the new owner and only the trigger saved the organization |
+| 4 | "At or below": adam (admin) promotes mia to ADMIN → **200**, mia is ADMIN |
+| 5 | `changeRole` without `updated_by`: `updated_by` still **`seed`** (the inserting value) after alice's change |
+
+**Mutations** (15 of 15 caught):
+
+| # | Planted | Went red | The failing assertion |
+|---|---|---|---|
+| 1 | The rule checks only the new role (review must-fix 2) | 3 role rows, the service and matrix tests (7) | owner on owner: expected false, was true |
+| 2 | Role changes "at or below" | 10 tests | expected false, was true; admin's promotion 200 |
+| 3 | Removal "at or below" | 7 tests | the diagonal rows; admin removing admin 204 |
+| 4 | A same-role change still writes | service no-op + integration no-op | `updated_by` expected `seed`, was `adam` |
+| 5 | `changeRole` without the expected role | `theConditionalStatements_matchNothing_…` | expected 0 rows, was 1 |
+| 6 | `changeRole` keeps the old `updated_by` | `changeRole_returnsTheStoredRow_…` | expected `alice`, was `seed` |
+| 7 | Promote before demote | service + 3 integration tests | expected 204, was **409** |
+| 8 | Step 2's 0 rows ignored | service + outsider test | expected 404, was **409** |
+| 9 | Password before the owner check | 3 workflow tests | "no interactions wanted" on `Reauthentication` |
+| 10 | No self-transfer check | workflow + integration | expected 400, was **204** |
+| 11 | `leave` doesn't exclude the owner | repository + matrix row 17 | 0 rows expected; `RESOURCE_CONFLICT` instead of `OWNER_CANNOT_LEAVE` |
+| 12 | `remove` without the organization | `theConditionalStatements_matchNothing_…` | expected 0, was 1 |
+| 13 | `promoteToOwner` without the organization | repository + outsider `gil` | **survived first** (see below); then expected 404, was **409** |
+| 14 | The gate skips every `OPTIONS` | `anOptionsMappingOfOurOwn_isStillGated` | expected 404, was **200** |
+| 15 | The 200 not read back from the database | service + integration | `username`, `displayName`, `joinedAt` were null |
+
+**Mutation 13 survived the first run.** My "member of another organization" was Globex's **owner**, whom step 2's `role <> 'OWNER'` excludes anyway, so removing the organization from the `WHERE` changed nothing visible. The case that matters is a **plain member** of another organization (`gil`, `carol` in the slice): with the mutation, Acme's transfer tried to make gil the owner of **Globex**, and only Globex's one-owner index stopped it (409 instead of 404). Both tests now include a plain member, and the mutation is caught.
+
+**Not proven yet:** your Postman run.
+
+### Re-review 2026-10-18 (read only, nothing run): no must-fix
+
+Both earlier must-fixes are fixed (enum-typed parameters; `mayChangeRole` checks the member **and** the new role), and every should-fix and nit from the first review is done. Checked: the check-then-write shape in all five statements, demote-before-promote, the no-op path, the read-back projection, the workflow's order (owner → self → password → transaction) with bcrypt outside the transaction, `/members/me` vs `{userId}`, the role tables (18 + 9 rows), the integration matrix (22 rows), the transfer race (409 **or** 403 accepted, never two owners).
+
+**Nits**
+- `MembershipService.transferOwnership` is `public`: a future caller can skip the password by calling it directly instead of `MembershipWorkflow`. Package-private keeps sudo mode unskippable from outside `organization` (Spring 6 honours `@Transactional` on non-private methods of class-based proxies).
+- **Lockout as a weapon** (known class, not new): someone holding a stolen access token can send 5 wrong passwords to `/ownership-transfer` and lock the owner out for 15 minutes, exactly as through change-password. Phase 10's rate limiting is where it's answered; worth one sentence in an interview.
+- Docs still owed: the implementation reference's §3.2 entry (coverage still ⏳; done at wrap-up) and the §3.2 Postman steps that *Where we are* refers to.
 
 ---
 

@@ -101,6 +101,69 @@ class OrganizationMembershipRepositoryTest {
         assertThat(membershipRepository.findRole(999_999_999L, alice.getId())).isEmpty();
     }
 
+    // §3.2's statements: each WHERE carries what the service decided on. Called here with a STALE or FOREIGN value,
+    // each must match 0 rows (that 0 is what the service turns into 409 / 404). A race would show the same, but not
+    // reliably; this shows it every time.
+    @Test
+    void theConditionalStatements_matchNothing_whenTheirAssumptionIsWrong() {
+        Organization acme = organizationWithOwner("acme", alice);
+        Organization globex = organizationWithOwner("globex", bob);
+        Instant now = Instant.now();
+
+        // carol is a plain MEMBER of ANOTHER organization: the case where only organization_id stops step 2
+        // (an owner of another organization would be excluded by "role <> OWNER" anyway)
+        UserAccount carol = entityManager.persist(user("carol"));
+        membershipRepository.saveAndFlush(OrganizationMembership.of(globex.getId(), carol.getId(), OrganizationRole.MEMBER));
+        assertThat(membershipRepository.promoteToOwner(acme.getId(), carol.getId(), now, "x")).isZero();
+        assertThat(membershipRepository.changeRole(acme.getId(), carol.getId(), OrganizationRole.MEMBER, OrganizationRole.ADMIN, now, "x")).isZero();
+        assertThat(membershipRepository.remove(acme.getId(), carol.getId(), OrganizationRole.MEMBER)).isZero();
+        assertThat(membershipRepository.leave(acme.getId(), carol.getId())).isZero();
+
+        // bob is a member (the owner) of ANOTHER organization: nothing in acme may touch his row
+        assertThat(membershipRepository.changeRole(acme.getId(), bob.getId(), OrganizationRole.OWNER, OrganizationRole.ADMIN, now, "x")).isZero();
+        assertThat(membershipRepository.remove(acme.getId(), bob.getId(), OrganizationRole.OWNER)).isZero();
+        assertThat(membershipRepository.promoteToOwner(acme.getId(), bob.getId(), now, "x")).isZero();
+        assertThat(membershipRepository.demoteOwner(acme.getId(), bob.getId(), now, "x")).isZero();
+        // A stale expected role: alice is the OWNER, not an ADMIN
+        assertThat(membershipRepository.changeRole(acme.getId(), alice.getId(), OrganizationRole.ADMIN, OrganizationRole.MEMBER, now, "x")).isZero();
+        assertThat(membershipRepository.remove(acme.getId(), alice.getId(), OrganizationRole.ADMIN)).isZero();
+        // The owner can't leave
+        assertThat(membershipRepository.leave(acme.getId(), alice.getId())).isZero();
+
+        entityManager.clear();
+        assertThat(membershipRepository.findRole(acme.getId(), alice.getId())).contains(OrganizationRole.OWNER);
+        assertThat(membershipRepository.findRole(globex.getId(), bob.getId())).contains(OrganizationRole.OWNER);
+        assertThat(membershipRepository.findRole(globex.getId(), carol.getId())).contains(OrganizationRole.MEMBER);
+    }
+
+    @Test
+    void theConditionalStatements_changeExactlyOneRow_whenTheirAssumptionHolds() {
+        Organization acme = organizationWithOwner("acme", alice);
+        membershipRepository.saveAndFlush(OrganizationMembership.of(acme.getId(), bob.getId(), OrganizationRole.MEMBER));
+        Instant now = Instant.now();
+
+        assertThat(membershipRepository.changeRole(acme.getId(), bob.getId(), OrganizationRole.MEMBER, OrganizationRole.ADMIN, now, "alice")).isOne();
+        // Transfer, in the order that satisfies the one-owner index
+        assertThat(membershipRepository.demoteOwner(acme.getId(), alice.getId(), now, "alice")).isOne();
+        assertThat(membershipRepository.promoteToOwner(acme.getId(), bob.getId(), now, "alice")).isOne();
+        runDeferredChecksNow();   // one owner at "commit": no exception
+        assertThat(membershipRepository.leave(acme.getId(), alice.getId())).isOne();   // alice is an ADMIN now
+
+        entityManager.clear();
+        assertThat(membershipRepository.findRole(acme.getId(), bob.getId())).contains(OrganizationRole.OWNER);
+        assertThat(membershipRepository.findRole(acme.getId(), alice.getId())).isEmpty();
+    }
+
+    @Test
+    void promotingBeforeDemoting_isRefusedImmediately_byTheOneOwnerIndex() {
+        Organization acme = organizationWithOwner("acme", alice);
+        membershipRepository.saveAndFlush(OrganizationMembership.of(acme.getId(), bob.getId(), OrganizationRole.MEMBER));
+
+        assertThatThrownBy(() -> membershipRepository.promoteToOwner(acme.getId(), bob.getId(), Instant.now(), "alice"))
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .hasMessageContaining("uk_organization_memberships_one_owner");
+    }
+
     private Organization organizationWithOwner(String slug, UserAccount owner) {
         Organization organization = organizationRepository.saveAndFlush(Organization.create(slug, slug));
         membershipRepository.saveAndFlush(OrganizationMembership.of(organization.getId(), owner.getId(), OrganizationRole.OWNER));

@@ -22,4 +22,18 @@ public enum OrganizationRole {
     public boolean isAtLeast(OrganizationRole required) {
         return this == required || isAbove(required);
     }
+
+    /**
+     * May a caller with this role give a member who holds {@code targetRole} the role {@code newRole}? Two comparisons:
+     * the member AND the role they'd get must both be strictly below the caller. With only the second, an owner could
+     * "demote" themselves (OWNER → ADMIN is a role below OWNER), and only the database's owner trigger would stop it.
+     */
+    public boolean mayChangeRole(OrganizationRole targetRole, OrganizationRole newRole) {
+        return isAbove(targetRole) && isAbove(newRole);
+    }
+
+    /** May a caller with this role remove a member who holds {@code targetRole}? Never yourself or a peer. */
+    public boolean mayRemove(OrganizationRole targetRole) {
+        return isAbove(targetRole);
+    }
 }

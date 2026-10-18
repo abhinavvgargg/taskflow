@@ -15,6 +15,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Optional;
@@ -70,6 +72,12 @@ class TenantGateInterceptorTest {
         @GetMapping("/api/v1/organizations/{orgId}/probe")
         String probe() {
             return tenantContext.organizationId() + ":" + tenantContext.role();
+        }
+
+        // An OPTIONS mapping of our own: it runs our code, so it must stay gated (unlike Spring's own OPTIONS answer)
+        @RequestMapping(value = "/api/v1/organizations/{orgId}/options-probe", method = RequestMethod.OPTIONS)
+        String optionsProbe() {
+            return "reached";
         }
 
         // Deliberately mis-named: the gate can't find {orgId}
@@ -130,6 +138,17 @@ class TenantGateInterceptorTest {
                 .andExpect(header().string("Allow", containsString("GET")));
 
         verify(membershipLookup, never()).roleOf(anyLong(), anyLong());
+    }
+
+    // Pins WHY the gate checks "is it our @Controller" rather than "is it an OPTIONS": skipping every OPTIONS would
+    // also stop the 500 above, and would let a stranger through here
+    @Test
+    void anOptionsMappingOfOurOwn_isStillGated() throws Exception {
+        given(membershipLookup.roleOf(42L, BOB.id())).willReturn(Optional.empty());
+
+        mockMvc.perform(options("/api/v1/organizations/42/options-probe").with(asBob()))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("ORGANIZATION_NOT_FOUND"));
     }
 
     @Test

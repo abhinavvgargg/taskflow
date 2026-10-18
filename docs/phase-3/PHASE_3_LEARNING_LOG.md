@@ -2,7 +2,7 @@
 
 > Organised by **theme**, not by sub-section (rule since 2026-10-01). Sub-section detail (briefs, requirements, per-step deliberate failures, test plans) lives in `PHASE_3_REQUIREMENTS.md`.
 > Companions: `../phase-2/PHASE_2_LEARNING_LOG.md` (its §8 is the backlog this phase started from) · `../phase-1/SECURITY_TESTING_GUIDE.md` §8 (the test tools added in §3.0).
-> **Covers so far:** §3.0 Tier-1 test debt (2026-10-13); §3.1 memberships and the tenant gate (built 2026-10-15, code and tests written by Claude at your request; `OPTIONS` fix after review 2026-10-16; your Postman run passed 2026-10-16). Decisions D1–D8 taken 2026-10-13 (all the recommendations).
+> **Covers so far:** §3.0 Tier-1 test debt (2026-10-13); §3.1 memberships and the tenant gate (built 2026-10-15, code and tests written by Claude at your request; `OPTIONS` fix after review 2026-10-16; your Postman run passed 2026-10-16); §3.2 managing members (2026-10-18: you started it and fixed the review's must-fix items; I finished it and wrote its tests at your request). Decisions D1–D8 taken 2026-10-13 (all the recommendations).
 
 ---
 
@@ -20,15 +20,20 @@
 | **One source for "the current organization"** (§3.1) | `TenantContext` (`@RequestScope`): entered once by the gate; services read the organization id and role from it and never from the path. `requireAtLeast(role)` is the 403 for "member, but not enough" | `TenantContext`, `OrganizationRole` (`isAbove`, `isAtLeast`), `TenantErrorCode` |
 | **"My organizations", get one, list members** (§3.1) | The list shows only the caller's organizations with their role (it used to show everyone's); get and members are behind the gate; members show user id, username, display name, role, joined-at, and no email | `OrganizationController`, `MemberController`, `MembershipService` |
 | **Commit-time constraint names** (§3.1) | The 409 handler now names a constraint that fails at commit too (it only could for statement-time failures), by reading the driver's exception with Hibernate's own PostgreSQL rules | `CommonErrorUtility` |
+| **Changing a member's role** (§3.2) | Read the member's role, apply D6's rule (`OrganizationRole.mayChangeRole`: the member and the new role both strictly below you), then one `UPDATE` whose `WHERE` repeats the role that was read; 0 rows → 409. The same role → 200 and no write. The response is read back from the database | `MembershipService.changeRole`, `OrganizationMembershipRepository.changeRole` / `findMember` |
+| **Removing a member, leaving** (§3.2) | Remove: the member strictly below you (`mayRemove`), one conditional `DELETE`. Leave: `DELETE /members/me`, a `DELETE … role <> 'OWNER'`; the owner gets 409 `OWNER_CANNOT_LEAVE` | `MembershipService.remove` / `leave` |
+| **Ownership transfer with the password** (§3.2) | Owner check → not yourself → the current password (outside any transaction) → one transaction: demote the owner, then promote the target; 0 rows in either step → 409 / 404, and the whole transfer rolls back | `MembershipWorkflow`, `MembershipService.transferOwnership`, `Reauthentication` |
+| **One re-authentication** (§3.2) | Change-password and transfer share `Reauthentication.confirmPassword`: through the `AuthenticationManager`, so a wrong password counts toward lockout | `Reauthentication` (was `AuthenticationUtil`) |
 | **18 Tier-1 tests** | Session revocation and IDOR (3), refresh rotation, reuse, superseded, the race, the dead-session rollback (4), reset and change revocation, single-use reset tokens and their race, wrong current password (5), lockout and enumeration (3), `prod` without a key (3) | `SessionRevocationIntegrationTest`, `RefreshIntegrationTest`, `PasswordSessionsIntegrationTest`, `LoginLockoutIntegrationTest`, `JwtKeyConfigTest` |
 
-**Not built yet:** §3.2–§3.6. **Tests:** Tier 2 of the carried debt is owed to Phase 11 (list in `PHASE_3_REQUIREMENTS.md` §3.0, *Out*).
+**Not built yet:** §3.3–§3.6. **Tests:** Tier 2 of the carried debt is owed to Phase 11 (list in `PHASE_3_REQUIREMENTS.md` §3.0, *Out*).
 
 ### Evidence
 
 | | |
 |---|---|
 | **Verified by me (2026-10-13)** | Suite before §3.0: **83 tests, 12 s wall, 2 Postgres containers**; after: **101 tests, 14 s, 2 containers**. The three classes with races passed 5 repeated runs. All **14 mutations** caught, each planted alone in a scratch copy of the project (deleted afterwards; your `src/main` was never edited). Boot 3.5.16's client detection order (Apache → Jetty → Reactor → JDK → simple) and that the JDK builder configures no cookie handler, read in `spring-boot-3.5.16-sources.jar`. |
+| **Verified by me (2026-10-18, §3.2)** | Suite: **223 tests, 0 failures, 23.2 s wall, still 2 Postgres containers** (87 added, 55 of them parameterized rows). The transfer race passed 5 repeated runs. **15 mutations** caught, one only after a test was strengthened (mutation 13). Deliberate failures 1–5 observed in a scratch copy (deleted afterwards); deliberate failure 3 only with a widened window. Results in `PHASE_3_REQUIREMENTS.md` §3.2. |
 | **Verified by me (2026-10-15, §3.1)** | Suite: **136 tests, 0 failures, 18.6 s wall, still 2 Postgres containers** (35 tests added or rewritten, including the 2 for the `OPTIONS` fix on 2026-10-16). **15 mutations** caught, each planted alone in a scratch copy (deleted afterwards). Deliberate failures 1–5 observed in the scratch copy: results in `PHASE_3_REQUIREMENTS.md` §3.1. Read in sources: Spring Data JPA 3.5.13 qualifies a sort property with the root alias unless it starts with a join variable (`HqlSortedQueryTransformer.visitJoinPath`, `JpaQueryTransformerSupport.shouldPrefixWithAlias`); `@DataJpaTest` includes `JdbcTemplateAutoConfiguration`; Hibernate 6.6.53's PostgreSQL constraint-name extractor works from SQLState + message. spring-webmvc 6.2.19 answers an unmapped `OPTIONS` with its own `HandlerMethod` from `handleNoMatch`, with no path variables stored (`handleMatch` stores them, and it doesn't run). Your dev database was **not** touched: it is still at V6 until you start the app. |
 | **Verified for the brief (2026-10-13)** | V7–V9 on a scratch copy of the dev database (dropped afterwards); the Hibernate 6.6.53 and Spring 6.2.19 behaviour listed in the brief's D4 and §3.1. |
 | **Reported by you (2026-10-16, §3.1)** | Your Postman + SQL run: **all 23 rows passed as expected** (V7 applied with the expected backfill; create → `OWNER`; "mine" only; the non-member 404 identical to a non-existent id's and to `/abc`, checked by a Postman test script; members without email; sorts and their 400s; carol's removal → 404 on her next request with the same token; `OPTIONS` → 200 with `Allow` for member and non-member alike; 401 without a token; the four database invariants refused by name). The console's "one gate query per request" check wasn't reported separately. |
@@ -113,6 +118,34 @@ Dated, with alternatives, in `PHASE_3_REQUIREMENTS.md`'s Decisions table. One li
 - **Spring Data prefixes sort properties with the query's first alias, unless they start with a join variable.** For `from OrganizationMembership m join UserAccount u …`, sorting by `username` becomes `m.username`, which doesn't exist. It leaves `u.username` alone, because `u` is registered as a join variable (*read in the Spring Data JPA 3.5.13 source*). So the API's sort names are translated once in `MembershipService` (`username` → `u.username`, `joinedAt` → `createdAt`), and "my organizations" is written with `Organization o` first so `name` and `createdAt` resolve against it directly.
 - **The allow-list protects the translation.** Only names in the controller's list reach the query (`?sort=email` is 400 `INVALID_SORT_PROPERTY`), so a client can't sort by, and so probe, a column it can't see.
 
+### Changing shared rows safely: read, decide, write with the same value
+
+- **"Read, then decide, then write" is a race unless the write repeats what was read.** To change mia's role, the service reads her role, checks the rule, then writes. Between the read and the write, a transfer can make her the owner. If the `UPDATE` only says "where she's in this organization", it overwrites whatever is there now: the brand-new owner becomes a MEMBER. With `AND role = :expectedCurrent`, the `UPDATE` matches 0 rows and the service answers 409 `MEMBERSHIP_CHANGED`: "it changed, reload". The expected role works like a version number, at no cost. *(Seen, deliberate failure 3: with the window widened in a scratch copy, the version with the expected role answered 409 `MEMBERSHIP_CHANGED` six times out of six. Without it, the demote overwrote the new owner six times out of six, and only the "has an owner" trigger stopped the commit, as a 409 `ck_organizations_has_owner` that tells the caller nothing.)*
+- **The database is the referee for races, and it uses row locks.** When two transactions update the same row, the second waits for the first to commit, then re-checks its `WHERE` against the new row. That's why "two transfers at once" ends with exactly one owner: the second transfer's "demote alice where she's OWNER" finds she isn't any more. *(Seen: the race test, 5 runs out of 5.)*
+- **Bulk statements bypass JPA auditing, so they set `updated_at` and `updated_by` themselves.** A `@Modifying` query goes straight to SQL: no dirty checking, no `@PreUpdate`, no `@LastModifiedBy`. *(Seen, deliberate failure 5: without it, `updated_by` still said who inserted the row.)*
+- **A bulk `UPDATE` leaves loaded entities stale, so read the answer back with a fresh query.** An entity loaded earlier in the transaction still holds the old role after the `UPDATE`. The response is built from a projection query run after the change, which is what the row really holds now. The role itself is read as a scalar (`findRole`), never as an entity, for the same reason.
+- **A no-op shouldn't write.** Setting mia to MEMBER when she already is would still stamp `updated_by` with someone who changed nothing. The rule runs first (so only someone allowed to make the change can make the no-op), then the write is skipped.
+
+### One rule for "who may act on whom"
+
+- **Two comparisons, not one.** "The new role must be below yours" sounds like the whole rule. It isn't: the owner could then "demote" themselves (OWNER → ADMIN, and ADMIN is below OWNER). The member being changed must be below you too. *(Hit: your first version checked only the new role; the review predicted the owner's self-demotion would be stopped only by the database trigger, as a confusing 409. Mutation 1 shows it now: the 18-row table and the matrix catch it.)*
+- **Put the rule in one place and test it as a table.** `OrganizationRole.mayChangeRole` and `mayRemove` are a few characters each, and the tests list every combination (18 and 9 rows). A hand-written "if owner … else if admin …" in each endpoint would disagree with itself sooner or later.
+- **Leaving is not "removing yourself".** The rule forbids acting on yourself (you're not below yourself), so leaving is its own endpoint, `DELETE /members/me`. Spring picks the literal `/members/me` over `/members/{userId}`, because a literal segment is more specific than a variable.
+
+### Sudo mode: the password again, at the right moment
+
+- **An irreversible action asks for the password, even inside a valid session.** A stolen 15-minute access token must not be enough to give the organization away forever. The token proves "this browser logged in recently"; the password proves "the owner is at the keyboard now".
+- **The order of checks matters.** First "are you the owner?" (free, and it means a member's wrong password never counts toward *their* lockout), then "not yourself" (a transfer to yourself would demote you and promote you straight back: a 204 that did nothing), then the password, then the transaction. *(Seen: planting "password first" turned three ordering tests red.)*
+- **bcrypt runs outside the transaction.** It takes about 100 ms on purpose. Inside a transaction it would hold one of the pool's few connections the whole time, so five slow transfers would make every other request wait. `MembershipWorkflow` isn't transactional; only the final service call is.
+- **One re-authentication for every caller.** Change-password and transfer both call `Reauthentication.confirmPassword`, which goes through the `AuthenticationManager` like a login, so a wrong password counts toward lockout everywhere. A locked account gets the same "incorrect password" answer, so the holder of a stolen token can't learn that the account is locked.
+
+### Testing what only a race would show
+
+- **A condition that only matters under a race needs a test that doesn't need the race.** The "expected role" in each `WHERE` only changes the outcome when something changes in between, which a normal test never arranges. So the repository test calls each statement directly with a stale role, or with another organization's member, and expects 0 rows. *(Seen: mutations 5 and 12 were caught only by that test.)*
+- **Pick the test data that makes the condition the only thing standing in the way.** My first "member of another organization" was that organization's owner. Step 2 of a transfer excludes owners anyway (`role <> 'OWNER'`), so removing "this organization" from its `WHERE` changed nothing a test could see. *(Hit: mutation 13 survived. With a plain member of another organization, Acme's transfer tried to make that person the owner of the other organization, and only its one-owner index stopped it.)* The rule now: for each condition in a `WHERE`, ask "which row would ONLY this condition exclude?", and put that row in the test.
+- **A race window you can't hit, you can widen, but only in a scratch copy.** Twenty-five runs with delays swept across 0–240 ms never reached the window in deliberate failure 3: the demote's read and write are microseconds apart. A 300 ms pause between them, planted in a throwaway copy, showed both outcomes every time. The real tests don't depend on such pauses.
+- **A race test asserts what must never happen, not which refusal the loser gets.** Two transfers at once: exactly one 204 and exactly one owner. The loser may get 409 (the database decided) or 403 (the winner had already committed when the loser reached the gate). Both are right; asserting only one of them would make the test flaky.
+
 ### Testing startup failures
 
 - **Test "refuses to start" with the smallest context that can fail for that reason.** A full `prod` run also lacks an `EmailSender`, so it fails for a different reason first, which is why Phase 2 never proved this. `ApplicationContextRunner` starts only `JwtProperties`, `JwtKeyConfig` and a clock, with the profile set by an initializer. It runs in under a second, without containers.
@@ -138,6 +171,12 @@ Dated, with alternatives, in `PHASE_3_REQUIREMENTS.md`'s Decisions table. One li
 | Database-enforced owner invariant (partial unique index + deferred constraint trigger) | An ownerless or two-owner organization from any code path, including ones not written yet |
 | `SET CONSTRAINTS ALL IMMEDIATE` in rolled-back tests of deferred rules | Tests that pass because the deferred check never ran |
 | Deleting organizations before users in the shared test cleanup | One class's leftovers breaking the next class's cleanup |
+| Conditional writes that repeat the value read (`AND role = :expectedCurrent`) | Lost updates; a race silently overwriting a new owner |
+| Bulk statements that set `updated_at` / `updated_by` themselves | Audit columns that never change after insert |
+| Reading the response back after a bulk update | Responses built from stale entities |
+| D6's rule as two comparisons in one place, tested as a full table | Owners demoting themselves; endpoints disagreeing about who may act on whom |
+| Password re-check for irreversible actions, outside the transaction, after the cheap checks | Account takeover from a stolen token; held connections during bcrypt; members locked out by checks they couldn't pass |
+| Repository tests with stale and foreign values for every conditional statement | `WHERE` conditions that no test can tell apart from their absence |
 
 ---
 
@@ -158,14 +197,20 @@ Dated, with alternatives, in `PHASE_3_REQUIREMENTS.md`'s Decisions table. One li
 11. **How do you test a deferred constraint when your tests roll back?** Flush, then run `SET CONSTRAINTS ALL IMMEDIATE`, which forces the pending deferred checks to run now. Without it, the test passes because the check would only run at a commit that never happens.
 12. **Why not keep the current tenant in a `ThreadLocal`?** Tomcat reuses threads. If anything skips the cleanup, the next request on that thread runs as the previous customer. A request-scoped bean is created and discarded by Spring with the request, and outside a request it throws, which is what you want for background jobs.
 
-**Not answerable yet:** role changes, removal and ownership transfer (§3.2), invitations (§3.3), the Hibernate tenant filter (§3.4).
+13. **Two admins change the same member's role at the same moment. What happens?** Each request reads the member's current role, checks the rule, and then runs one `UPDATE` that includes the role it read in its `WHERE`. The database row-locks the member: the second update waits, then sees the role is no longer what it read, matches nothing, and the API answers 409 "membership changed, reload". Nobody's change is silently lost.
+14. **How does an ownership transfer avoid ever having two owners, or none?** Two statements in one transaction, in a fixed order: demote the current owner, then promote the new one. A unique index allows at most one owner and is checked at each statement, so promoting first would fail. A deferred trigger checks at commit that there is at least one, so the zero-owner moment between the two statements is allowed but can never be committed.
+15. **Why ask for the password again when the user already has a valid token?** Because the action can't be undone and a token can be stolen. The token proves the browser was logged in recently; the password proves the owner is there now. It's checked after the free checks (are you the owner, is the target someone else) and outside the database transaction, because bcrypt is deliberately slow.
+16. **Why doesn't JPA auditing fill `updated_by` here?** Auditing runs when Hibernate flushes an entity. A `@Modifying` JPQL update goes straight to SQL, with no entity and no listener, so the query sets the audit columns itself.
+17. **How do you test a guard that only matters during a race?** Call the statement directly with the stale value the race would produce and assert it changes nothing. Then use mutation testing to check that removing the guard actually turns a test red; if it doesn't, the test data probably makes the guard redundant.
+
+**Not answerable yet:** invitations (§3.3), the Hibernate tenant filter (§3.4).
 
 ---
 
 ## 6. Commands
 
 ```bash
-./mvnw test                                                      # everything: 136 tests, ~19 s, 2 containers (§3.1)
+./mvnw test                                                      # everything: 223 tests, ~23 s, 2 containers (§3.2)
 ./mvnw test -Dtest=RefreshIntegrationTest                        # one class
 ./mvnw test -Dtest='RefreshIntegrationTest#twentyParallel*'      # one method (pattern)
 for i in 1 2 3 4 5; do ./mvnw -q test -Dtest=RefreshIntegrationTest || break; done   # flakiness check for a race test
@@ -182,14 +227,17 @@ rsync -a --exclude target --exclude .git --exclude .idea ./ /tmp/tf-mut/ && cd /
 
 **§3.1, 2026-10-15/16: 15 of 15 caught; deliberate failures 1–5 all observed.** Tables in `PHASE_3_REQUIREMENTS.md` §3.1. The ones worth remembering: the gate skipping a missing `{orgId}` → a stranger got **200** · 403 for non-members → three tests red, in the slice and over HTTP · "my organizations" without the caller in the `WHERE` → alice saw bob's `globex` · members without the organization in the `WHERE` → **2** members instead of 1 · the role lookup without the organization → bob, owner of another organization, came back as **OWNER** of alice's · a role "above" itself → only the diagonal rows of the 9-pair table went red · the gate on `/organizations/**` → "my organizations" became **500** · create without the owner → **409** at commit, zero rows kept (and, before the fix, no constraint name) · the gate as first built → a plain `OPTIONS` was **500**.
 
+**§3.2, 2026-10-18: 15 of 15 caught (one after strengthening a test); deliberate failures 1–5 observed.** Tables in `PHASE_3_REQUIREMENTS.md` §3.2. The ones worth remembering: the rule checking only the new role → the owner could demote themselves · "at or below" → an admin promoted a member to admin (**200**) · promote before demote → **409** `uk_organization_memberships_one_owner` on every transfer · step 2's count ignored → **409** `ck_organizations_has_owner` instead of 404 · no expected role in the `WHERE` → a late demote overwrote the new owner (only with the window widened) · no self-check → a transfer to yourself was a **204** that did nothing · `promoteToOwner` without the organization → **survived** until a plain member of another organization was in the test.
+
 ---
 
 ## 8. Debt and what's next
 
 - **Tier-2 tests** (Phase 11): §1.3 registration (duplicate 409 under a race, password never echoed), §1.4 verification details, §2.1 claim contents, cookie attributes and `no-store`, §2.2 `alg: none` / wrong key / **wrong `aud`** / converter rejections / the expiry boundary, §2.5 `CorsProperties` and the preflight table (needs a client that sends `Origin`: the JDK one does), Phase 0's `rejectedValue` test.
-- **Commit §3.1** (code, V7, tests and docs, staged by name). Nothing is committed yet.
+- **Commit §3.2** (code, tests and docs, staged by name). §3.1 was committed (`45c17b1`). `AuthenticationUtil` and `ChangeRoleResponse` were removed with `git rm`, so they're out of the index already.
+- **The §3.2 Postman run** (alice owner, adam admin, mia member): not done yet.
 - *Done 2026-10-16:* V7 applied to your dev database and the §3.1 Postman run passed (all 23 rows).
 - **Not measured yet:** the gate lookup's query plan with real row counts (the table is tiny everywhere so far).
-- **Owed from the §3.1 review:** a test that an `OPTIONS` mapping we write stays gated (the reason the fix beats "skip every `OPTIONS`"), and the commented-out `findRoleByOrganizationIdAndUserAccountId`. Fix as you pass in §3.2.
-- **Next: §3.2** (role changes, removal, leaving, ownership transfer).
+- *Done 2026-10-18:* §3.1's owed items (the `OPTIONS`-mapping test; the commented-out `findRoleByOrganizationIdAndUserAccountId` deleted).
+- **Next: §3.3** (invitations, V8).
 - **Your 15-minute notes** for Phase 1 and Phase 2.

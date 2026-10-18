@@ -7,11 +7,6 @@ import com.abhinav.taskflow.common.web.ClientInfo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.authentication.LockedException;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -23,8 +18,7 @@ public class PasswordWorkflow {
 
     private final PasswordService passwordService;
     private final AccountEmails accountEmails;
-    private final AuthenticationManager authenticationManager;
-    private final UserAccountRepository userAccountRepository;
+    private final Reauthentication reauthentication;
 
     public void requestReset(String email) {
 
@@ -51,23 +45,7 @@ public class PasswordWorkflow {
             throw new ResourceInvalidException(UserErrorCode.PASSWORD_UNCHANGED, "Old and new passwords cannot be same.").with("field", "newPassword");
         }
 
-        // The bearer principal has no email (the token carries none, on purpose). Load it by id; never add it to the token.
-        String email = userAccountRepository.findEmailById(authenticatedUser.id())
-                .orElseThrow(() -> new IllegalStateException("Authenticated account no longer exists"));
-
-        // Through the manager, like a login: a wrong current password counts toward lockout
-        UsernamePasswordAuthenticationToken authentication = UsernamePasswordAuthenticationToken.unauthenticated(email, changePasswordRequest.currentPassword());
-        authentication.setDetails(new WebAuthenticationDetails(clientInfo.ipAddress(), null));
-
-        try {
-            authenticationManager.authenticate(authentication);
-        }
-        catch (Exception e) {
-            if (e instanceof BadCredentialsException || e instanceof LockedException) {
-                throw new ResourceInvalidException(UserErrorCode.CURRENT_PASSWORD_INCORRECT, "Invalid current password.").with("field", "currentPassword");
-            }
-            throw e;
-        }
+        reauthentication.confirmPassword(authenticatedUser, changePasswordRequest.currentPassword(), clientInfo);
 
         AccountContact accountContact = passwordService.applyChange(authenticatedUser.id(), authenticatedUser.sessionId(), changePasswordRequest.newPassword(), clientInfo);
         accountEmails.sendPasswordChangedEmail(accountContact.accountId(), accountContact.email());
