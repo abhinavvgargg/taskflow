@@ -7,8 +7,8 @@
 | Sub-section | Feature | Status in this document |
 |---|---|---|
 | §3.0 | Tier-1 test debt and the test tools | ✅ tools covered in Part E (committed `ec5acad`) |
-| §3.1 | Memberships, the owner invariant, the tenant gate, my organizations, members | ✅ covered (built 2026-10-15; `OPTIONS` fix 2026-10-16; your Postman run passed 2026-10-16; **not yet committed**) |
-| §3.2 | Roles, removal, leaving, ownership transfer | ⏳ |
+| §3.1 | Memberships, the owner invariant, the tenant gate, my organizations, members | ✅ covered (built 2026-10-15; `OPTIONS` fix 2026-10-16; your Postman run passed 2026-10-16; committed `45c17b1`) |
+| §3.2 | Roles, removal, leaving, ownership transfer, shared re-authentication | ✅ covered (built 2026-10-18; your Postman run passed 2026-10-20; committed `ea7b9fb`) |
 | §3.3 | Invitations | ⏳ |
 | §3.4 | Projects and Hibernate's `@TenantId` | ⏳ |
 | §3.5 | Profile, README | ⏳ |
@@ -58,6 +58,18 @@ Memberships (and, in §3.3, invitations) are **access tables**: read before a te
 
 `OrganizationMembership` has no setters and every column is `updatable = false`; role changes (§3.2) are conditional `UPDATE`s carrying the expected role in their `WHERE`. Phase 2's D11, for the same reason: a stale entity flush can't write an old role back.
 
+### A10. Read, decide, then write with the value you read
+
+Every membership change reads the target's role, decides with the rule, then runs **one** conditional statement whose `WHERE` repeats the role it read (`AND m.role = :expectedCurrent`). If anything changed in between, 0 rows → 409, never a lost update. PostgreSQL's row lock makes the second of two concurrent writers re-check its `WHERE` against the committed row.
+
+### A11. "Who may act on whom" is one rule, in one place
+
+D6: you act only on members **strictly below** you and grant only roles strictly below yours. It lives in `OrganizationRole` (`isAbove`, `mayChangeRole` = member **and** new role below you, `mayRemove`), tested as complete tables. No endpoint writes its own `if owner … else if admin …`.
+
+### A12. Sudo mode for what a stolen token must not do
+
+Irreversible actions (transfer, password change) ask for the current password again, through the `AuthenticationManager` (so a wrong guess counts toward lockout), **outside** any transaction (bcrypt holds no pooled connection), and **after** the cheap checks (a member's wrong password never counts toward their lockout).
+
 ### A9. `common` never imports a feature
 
 The gate lives in `common/tenant` and asks an interface, `MembershipLookup`, which `organization` implements (exactly like Phase 2's `SessionStatus`).
@@ -77,7 +89,11 @@ TenantErrorCode                              OrganizationRepository (findMine)
 MembershipLookup (interface) ◄────────────── JpaMembershipLookup
 TenantGateInterceptor                        OrganizationMembershipRepository (findRole, findMembers)
 TenantWebConfig (patterns)                   OrganizationService (create, listMine, get)
-                                             MembershipService (listMembers)
+                                             MembershipService (list, changeRole, remove, leave, transferOwnership)
+                                             MembershipWorkflow (transfer: owner → self → password → tx)
+user
+────
+Reauthentication (confirmPassword: shared by change-password and transfer)
 common/error                                 OrganizationController, MemberController
 CommonErrorUtility (names commit-time        OrganizationResponseDto (+ role), MemberResponseDto
   violations too)
@@ -209,6 +225,56 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 
 **Files.** `organization/OrganizationRepository`, `OrganizationMembershipRepository`, `OrganizationService`, `MembershipService`, `OrganizationController`, `MemberController`, `OrganizationResponseDto`, `MemberResponseDto`, `OrganizationErrorCode` (`DUPLICATE_SLUG` only).
 
+### C5. Managing members: change role, remove, leave (§3.2)
+
+**What it does.** The owner promotes MEMBER → ADMIN and demotes ADMIN → MEMBER; owners remove admins and members, admins remove members; anyone but the owner leaves. Each change acts on the affected user's next request (the gate reads the membership each time).
+
+**How it's built.** `MembershipService` (`@Transactional`), organization always from `TenantContext`:
+- `changeRole(targetUserId, newRole, caller)`: `findRole` (scalar; 404 `MEMBER_NOT_FOUND` with `userId`) → `tenantContext.role().mayChangeRole(current, newRole)` else 403 `CANNOT_MANAGE_MEMBER` → if `current != newRole`: `changeRole(org, target, expectedCurrent, newRole, now, caller.username())`, 0 rows → 409 `MEMBERSHIP_CHANGED` → read back with `findMember` (a projection: the stored row, the list's DTO).
+- `remove(targetUserId)`: `findRole` → `mayRemove(current)` (yourself included: you're not below yourself) → conditional `DELETE … AND m.role = :expectedCurrent`, 0 rows → 409.
+- `leave(caller)`: `DELETE … AND m.role <> OWNER`; 0 rows → still a member = the owner → 409 `OWNER_CANNOT_LEAVE`; gone meanwhile → 404 `ORGANIZATION_NOT_FOUND`.
+- Repository statements are `@Modifying(flushAutomatically = true)` JPQL with **enum-typed parameters** and fully qualified enum literals (`com.abhinav.taskflow.common.tenant.OrganizationRole.OWNER`); the ones that update set `updatedAt` and `updatedBy` themselves.
+- `MemberController` (`/api/v1/organizations/{orgId}`): `PATCH /members/{userId}` with `ChangeRoleRequest(@NotNull @Pattern("ADMIN|MEMBER") String role)` → `OrganizationRole.valueOf` (safe after validation); `DELETE /members/me` (leave); `DELETE /members/{userId}` (remove).
+
+**Rules.**
+- Two comparisons for a role change: the member **and** the new role strictly below the caller. With only the second, an owner could "demote" themselves and only V7's commit-time trigger would stop it (with an unexplained 409).
+- A change to the current role is a **no-op**: 200, nothing written (`updated_by` never claims a change nobody made). The rule runs first, so only an allowed caller gets the no-op (an admin's `MEMBER` → `MEMBER`).
+- Validate `role` as a `String`: an enum field turns `GOD` into a JSON parse error (400 `BAD_REQUEST`, no field) and lets `OWNER` reach the service.
+- Leaving is its own endpoint: the literal `/members/me` is more specific than `/members/{userId}`.
+
+**Pitfalls.**
+- **A `String` bound to an enum-typed JPQL parameter fails at runtime** (Hibernate 6.6.53: `EnumJavaType` doesn't coerce, `QueryParameterBindingValidator` → `QueryArgumentException` → 500). *Found in review; fixed by typing the parameters as `OrganizationRole`.*
+- Bulk statements bypass JPA auditing (no `@LastModifiedBy`): set the columns in the statement.
+- A bulk `UPDATE` leaves loaded entities stale: read the role with a scalar query and the response with a projection, never from an entity loaded before the write.
+- A "stale expected role" only matters under a race: test the statements directly with a wrong expected role (0 rows), not only through the API.
+
+**Files.** `organization/MembershipService`, `OrganizationMembershipRepository` (`findMember`, `changeRole`, `remove`, `leave`), `MemberController`, `ChangeRoleRequest`, `OrganizationErrorCode`; `common/tenant/OrganizationRole` (`mayChangeRole`, `mayRemove`).
+
+---
+
+### C6. Ownership transfer and shared re-authentication (§3.2)
+
+**What it does.** `POST /api/v1/organizations/{orgId}/ownership-transfer {userId, currentPassword}`: the owner becomes ADMIN and the target becomes OWNER, atomically, after re-entering their password.
+
+**How it's built.**
+- `MembershipWorkflow.transferOwnership` (**not** transactional), in this order: (1) `tenantContext.requireAtLeast(OWNER)` → 403 `ORGANIZATION_ROLE_REQUIRED`; (2) `userId == caller.id()` → 400 `CANNOT_TRANSFER_TO_SELF` (`field: userId`); (3) `Reauthentication.confirmPassword` → 400 `CURRENT_PASSWORD_INCORRECT` (`field: currentPassword`); (4) `MembershipService.transferOwnership`.
+- `MembershipService.transferOwnership` (`@Transactional`): step 1 `demoteOwner` (`… SET role = ADMIN WHERE … AND role = OWNER`), 0 rows → 409 `MEMBERSHIP_CHANGED`; step 2 `promoteToOwner` (`… SET role = OWNER WHERE … AND role <> OWNER`), 0 rows → 404 `MEMBER_NOT_FOUND` (the exception rolls step 1 back).
+- `Reauthentication.confirmPassword(caller, password, clientInfo)` (`user`): email by id (`findEmailById`), `UsernamePasswordAuthenticationToken.unauthenticated` with `WebAuthenticationDetails(ip)`, `authenticationManager.authenticate`; `BadCredentialsException | LockedException` → 400 `CURRENT_PASSWORD_INCORRECT`; anything else propagates. Change-password uses it too.
+- `TransferOwnershipRequest(@NotNull Long userId, @NotBlank @MaxUtf8Bytes(72) String currentPassword)` with a `toString()` that hides the password.
+
+**Rules.**
+- **Demote first, then promote**: the one-owner index is checked per statement (promote-first collides with the current owner); the "has an owner" trigger only at commit (the zero-owner moment between them is allowed).
+- **Step 1's `AND role = OWNER` re-checks the gate's role in the database**: of two concurrent transfers, the second matches 0 rows (409), or, if the first already committed before the second reached the gate, gets 403. Never two owners.
+- **A transfer to yourself is refused up front**: step 1 would demote you and step 2 promote you straight back, a 204 that did nothing.
+- The cheap checks before the password; the password outside the transaction (A12).
+
+**Pitfalls.**
+- Re-authentication **resets** the failure counter on success (Phase 1's listener reacts to the password principal), as change-password always did.
+- A stolen access token can lock the owner out with 5 wrong passwords here, as through change-password: lockout as a weapon, answered by Phase 10's rate limiting.
+- `MembershipService.transferOwnership` is `public`: a future caller could skip the workflow (and the password). Package-private would make sudo mode unskippable from outside `organization` (nit, open).
+
+**Files.** `organization/MembershipWorkflow`, `MembershipService#transferOwnership`, `OrganizationMembershipRepository` (`demoteOwner`, `promoteToOwner`), `MemberController#transferOwnership`, `TransferOwnershipRequest`; `user/Reauthentication`, `PasswordWorkflow#changePassword`.
+
 ---
 
 ## Part D — Rebuilding this in another project: the recipe
@@ -223,7 +289,9 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 6. **Gate interceptor** for `/organizations/*` and `/organizations/*/**`: only `@Controller` methods; `{orgId}` by name, missing → 500; non-numeric and non-member → the same constant 404; enter the context.
 7. **Creation** inserts organization + owner in one transaction; **"mine"** query rooted on the organization with the caller in the `WHERE`; **members** query with the organization from the context, no email; translate sort names after validation.
 8. **Error naming:** make the conflict handler read a constraint name from a raw `SQLException` too (commit-time violations).
-9. **Tests:** slices mock the lookup and import the context; a probe controller with a right-named and a wrong-named endpoint (+ `OPTIONS`); integration with two organizations and whole-body 404 comparison; `SET CONSTRAINTS ALL IMMEDIATE` in JPA slices; cleanup deletes organizations before users.
+9. **Member management:** a role-rule enum with `mayChangeRole` (member and new role below the caller) and `mayRemove`; read the target's role (scalar) → decide → one conditional statement repeating the read role, enum-typed parameters, setting `updated_at`/`updated_by`; no-op for the same role; read the response back with a projection; leave as its own endpoint.
+10. **Transfer:** a non-transactional workflow (owner → not yourself → password through the `AuthenticationManager` → the transaction); in the transaction, demote with `AND role = OWNER`, then promote with `AND role <> OWNER`; 0 rows → 409 / 404 and roll back.
+11. **Tests:** slices mock the lookup and import the context; a probe controller with a right-named and a wrong-named endpoint (+ `OPTIONS`); integration with two organizations and whole-body 404 comparison; `SET CONSTRAINTS ALL IMMEDIATE` in JPA slices; cleanup deletes organizations before users; the role rules as complete tables; the who-can-do-what matrix as a parameterized integration test; conditional statements called directly with a stale expected role; two concurrent transfers (one 204, one owner).
 
 ---
 
@@ -238,6 +306,10 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 | GET | `/api/v1/organizations/{orgId}` | bearer + gate | 200 `{…, role}` | 401 · 404 `ORGANIZATION_NOT_FOUND` |
 | GET | `/api/v1/organizations/{orgId}/members?page&size&sort` | bearer + gate | 200 page of `{userId, username, displayName, role, joinedAt}`; sort `username`, `joinedAt` | 400 · 401 · 404 |
 | OPTIONS | `/api/v1/organizations/{orgId}` (no `Origin`) | bearer | 200 `Allow: GET,HEAD,OPTIONS` (Spring's answer, not gated) | 401 |
+| PATCH | `/api/v1/organizations/{orgId}/members/{userId}` | bearer + gate | 200 `{userId, username, displayName, role, joinedAt}` (the stored row; same role = no write) | 400 `VALIDATION_FAILED` (`field: role`) · 403 `CANNOT_MANAGE_MEMBER` · 404 `ORGANIZATION_NOT_FOUND` / `MEMBER_NOT_FOUND` · 409 `MEMBERSHIP_CHANGED` |
+| DELETE | `/api/v1/organizations/{orgId}/members/{userId}` | bearer + gate | 204 | 403 `CANNOT_MANAGE_MEMBER` (yourself included) · 404 · 409 `MEMBERSHIP_CHANGED` |
+| DELETE | `/api/v1/organizations/{orgId}/members/me` | bearer + gate | 204 | 404 `ORGANIZATION_NOT_FOUND` · 409 `OWNER_CANNOT_LEAVE` |
+| POST | `/api/v1/organizations/{orgId}/ownership-transfer` | bearer + gate + password | 204 | 400 `VALIDATION_FAILED` / `CANNOT_TRANSFER_TO_SELF` (`field: userId`) / `CURRENT_PASSWORD_INCORRECT` (`field: currentPassword`) · 403 `ORGANIZATION_ROLE_REQUIRED` · 404 `MEMBER_NOT_FOUND` · 409 `MEMBERSHIP_CHANGED` |
 
 ### Errors added
 
@@ -245,6 +317,12 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 |---|---|---|---|
 | `ORGANIZATION_NOT_FOUND` | 404 | the gate; `OrganizationService.get` | Unknown, non-member and non-numeric alike; detail always "Organization not found" |
 | `ORGANIZATION_ROLE_REQUIRED` | 403 | `TenantContext.requireAtLeast` | Property `requiredRole`; only inside your own organization |
+| `MEMBER_NOT_FOUND` | 404 | `MembershipService` | The target isn't a member of **this** organization (a member of another one included); property `userId`; a 404 inside your own organization reveals nothing the members list doesn't |
+| `CANNOT_MANAGE_MEMBER` | 403 | `MembershipService` | D6's rule said no; property `userId` |
+| `MEMBERSHIP_CHANGED` | 409 | `MembershipService` | A conditional statement matched 0 rows: the role changed, the member left, or (transfer step 1) you're no longer the owner |
+| `OWNER_CANNOT_LEAVE` | 409 | `MembershipService.leave` | Transfer ownership first |
+| `CANNOT_TRANSFER_TO_SELF` | 400 | `MembershipWorkflow` | `field: userId` |
+| `CURRENT_PASSWORD_INCORRECT` | 400 | `Reauthentication` | Phase 1's code, now shared; `field: currentPassword`; a locked account gets the same answer |
 | `RESOURCE_CONFLICT` with `constraint` | 409 | the database | `ck_organizations_has_owner`, `uk_organization_memberships_one_owner`, `uk_organization_memberships_org_user`, `uk_organizations_slug` |
 
 ### Test tools (§3.0)
@@ -267,15 +345,18 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 | Hibernate 6.6.53 `PostgreSQLDialect`'s extractor takes the name from the message by SQLState template | The trigger's message is worded like PostgreSQL's |
 | Spring Data JPA 3.5.13 prefixes sort properties with the root alias unless they start with a join variable | Translate sort names; root "mine" on `Organization` |
 | `@DataJpaTest` includes `JdbcTemplateAutoConfiguration`; its `JdbcTemplate` joins the test transaction | `SET CONSTRAINTS ALL IMMEDIATE` works inside the rolled-back test |
+| Hibernate 6.6.53 `QueryParameterBindingImpl.setBindValue` coerces through the parameter's `JavaType`; `EnumJavaType` doesn't override `coerce`, and `QueryParameterBindingValidator` then rejects a `String` for an enum-typed parameter (`QueryArgumentException`) | Type JPQL role parameters as `OrganizationRole`; convert the validated `String` once, in the controller |
+| `GlobalExceptionHandler` doesn't override `handleHttpMessageNotReadable`: a JSON value an enum can't take is a 400 `BAD_REQUEST` without a field | Validate `role` as a `String` with `@Pattern` (one 400 `VALIDATION_FAILED`, `field: role`) |
 
 ---
 
 ## Part G — Known gaps, debt and what comes next
 
-- **Owed test:** an `OPTIONS` mapping we write must stay gated (the reason the `@Controller` predicate beats "skip every `OPTIONS`").
-- **Nits:** commented-out `findRoleByOrganizationIdAndUserAccountId`; concurrent duplicate slug → generic 409; the role order is the rule; `CommonErrorUtility` builds a `PostgreSQLDialect` to borrow its extractor.
+- *Closed in §3.2:* the `OPTIONS`-mapping test; the commented-out `findRoleByOrganizationIdAndUserAccountId`.
+- **§3.2 nits:** `MembershipService.transferOwnership` is `public` (package-private would keep the password step unskippable); a stolen access token can lock the owner out with 5 wrong transfer passwords (Phase 10's rate limiting).
+- **§3.1 nits:** concurrent duplicate slug → generic 409; the role order is the rule; `CommonErrorUtility` builds a `PostgreSQLDialect` to borrow its extractor.
 - **📊 Not measured:** the gate lookup's plan with real row counts.
-- **Next:** §3.2 (conditional role changes, removal, leave, transfer with re-authentication), §3.3 invitations, §3.4 `@TenantId` on projects (the scope half of A2).
+- **Next:** §3.3 invitations (V8), §3.4 `@TenantId` on projects (the scope half of A2), §3.5 profile and README.
 
 ---
 
@@ -284,3 +365,4 @@ The trigger raises `'organization % violates check constraint "ck_organizations_
 | Date | Sub-section | Change |
 |---|---|---|
 | 2026-10-16 | §3.0, §3.1 | Created: principles A1–A9, architecture, C1–C4, recipe, quick reference, verified framework behaviour, gaps. Covers the `OPTIONS` fix after review and your passing Postman run (23 rows). |
+| 2026-10-20 | §3.2 | Added A10–A12, C5 (change role, remove, leave), C6 (transfer, shared `Reauthentication`), recipe steps 9–10, the four endpoints and six error codes, two verified framework facts (enum-typed JPQL parameters; enum values in JSON bodies), the §3.2 nits. Built 2026-10-18 (you started it; Claude finished it at your request); your Postman run passed 2026-10-20; committed `ea7b9fb`. |

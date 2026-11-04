@@ -36,4 +36,9 @@ public enum OrganizationRole {
     public boolean mayRemove(OrganizationRole targetRole) {
         return isAbove(targetRole);
     }
+
+    /** May a caller with this role invite someone as {@code role}? Strictly below: owners invite admins and members, admins only members. */
+    public boolean mayInvite(OrganizationRole role) {
+        return isAbove(role);
+    }
 }

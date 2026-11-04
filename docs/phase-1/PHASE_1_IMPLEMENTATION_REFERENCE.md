@@ -447,7 +447,9 @@ Every constraint is named (the application maps errors by constraint name; Postg
 
 **Changed in Phase 2.** The caller's email is loaded by id (`findEmailById`), because the bearer principal carries none; `applyChange` also revokes every **other** session (`PASSWORD_CHANGED`), keeping the current one.
 
-**Files.** `user/PasswordWorkflow#changePassword`, `PasswordService#applyChange`, `UserAccount#changePassword`, `ChangePasswordRequest`, `UserController#changePassword`.
+**Changed in Phase 3 (§3.2).** Step 2 moved into `user/Reauthentication.confirmPassword(caller, password, clientInfo)`, shared with ownership transfer ("sudo mode"): same pipeline, same events, same lockout counting, same 400. It catches `BadCredentialsException | LockedException` (the old `catch (Exception e)` + `instanceof` nit is gone); anything else propagates. Called outside any transaction.
+
+**Files.** `user/PasswordWorkflow#changePassword`, `Reauthentication` (since Phase 3), `PasswordService#applyChange`, `UserAccount#changePassword`, `ChangePasswordRequest`, `UserController#changePassword`.
 
 ---
 
@@ -595,3 +597,4 @@ Spring Security 6.5.11 / Boot 3.5.16 / Hibernate 6.6, read in `~/.m2` or tested 
 | Date | Change |
 |---|---|
 | 2026-10-12 | Created from the Phase 1 requirements and learning log and the current code: principles, architecture, C1–C12, recipe, quick reference, verified framework behaviour, gaps. Each entry notes what Phase 2 changed (Basic removed, bearer principal, login tokens and cookie, session revocation on reset and change, `UserRole` and IP parsing moved, V6 event types). |
+| 2026-10-20 | C11: change-password's re-authentication moved to `Reauthentication` (Phase 3 §3.2), shared with ownership transfer. |

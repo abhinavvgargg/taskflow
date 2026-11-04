@@ -272,6 +272,6 @@ Title it **"TaskFlow – Multi-Tenant Project & Issue Tracking Platform"**, neve
 
 > Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3. Then read the current phase's `docs/phase-N/PHASE_N_REQUIREMENTS.md` and `PHASE_N_LEARNING_LOG.md`, and the testing guides. We're on **§N.x** — brief it in the section 3.1 layout; requirements, not code.
 
-**Resuming right now (Phase 3: §3.0 and §3.1 done 2026-10-16; §3.2 next):**
+**Resuming right now (Phase 3: §3.0–§3.2 done, last commit `ea7b9fb` 2026-10-20; §3.3 next):**
 
-> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read "Where we are" and the Decisions table in `docs/phase-3/PHASE_3_REQUIREMENTS.md`, `docs/phase-3/PHASE_3_LEARNING_LOG.md`, `docs/phase-3/PHASE_3_IMPLEMENTATION_REFERENCE.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` (§8: the test tools) and `docs/phase-0/TESTING_GUIDE.md`. We're on **§3.2** (roles, removal, leaving, ownership transfer): re-check its brief against the code, then I implement it. Tests are mine to write unless I explicitly ask you to. I run the app in IntelliJ and call the API with Postman.
+> Read `docs/PROJECT_CONTEXT.md` and follow the working agreement in section 3 exactly. Then read "Where we are" and the Decisions table in `docs/phase-3/PHASE_3_REQUIREMENTS.md`, `docs/phase-3/PHASE_3_LEARNING_LOG.md`, `docs/phase-3/PHASE_3_IMPLEMENTATION_REFERENCE.md`, `docs/phase-1/SECURITY_TESTING_GUIDE.md` (§8: the test tools) and `docs/phase-0/TESTING_GUIDE.md`. We're on **§3.3** (invitations, V8): re-check its brief against the code, then I implement it. Tests are mine to write unless I explicitly ask you to. I run the app in IntelliJ and call the API with Postman.

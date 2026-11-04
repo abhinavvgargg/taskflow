@@ -47,6 +47,18 @@ public interface OrganizationMembershipRepository extends JpaRepository<Organiza
             """)
     Page<MemberResponseDto> findMembers(@Param("organizationId") Long organizationId, Pageable pageable);
 
+    // Invite: is this address already a member here? (The accepted "email oracle" for admins, see §3.3's traps.)
+    // user_accounts' unique email index finds the account, uk_organization_memberships_org_user the membership
+    @Query("""
+            select case when count(m) > 0 then true else false end
+              from OrganizationMembership m
+              join UserAccount u on u.id = m.userAccountId
+             where m.organizationId = :organizationId
+               and u.email = :email
+            """)
+    boolean existsMemberWithEmail(@Param("organizationId") Long organizationId,
+                                  @Param("email") String email);
+
     // One member, as the list shows them: read AFTER a change, so the response is the stored row (a projection, so no
     // entity the bulk UPDATE left stale in the persistence context)
     @Query("""

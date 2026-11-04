@@ -4,14 +4,14 @@
 > **Time-box: 8h, tests included. Hard stop at 12h (150%).** The carried test debt is not in it (D1 gives it its own budget). Anything unfinished becomes a side task in Phase 4.
 > You run the app from IntelliJ and call the API with Postman; run steps come after each sub-section is built, in Postman form (one collection per user: alice, bob, carol).
 
-## ▶ Where we are (resume here) — §3.2 built 2026-10-18 (not committed); §3.3 next
+## ▶ Where we are (resume here) — §3.3 in progress (started 2026-10-20)
 
 | | |
 |---|---|
 | **Done** | Phase 2 closed 2026-10-12; §2.4 + §2.5 committed (`b6f3dde`). **§3.0** (2026-10-13, committed `ec5acad`): 18 Tier-1 tests + infrastructure, written by Claude at your request; all 14 mutations caught; suite 101 tests, 14 s, 2 containers. This brief: D1–D8 raised, §3.0–§3.7 written, V7–V9 SQL **verified on a scratch copy of your dev database** (2026-10-13; `taskflow_scratch_p3`, dropped afterwards; your dev DB untouched, still at V6). |
 | **§3.1** | ✅ **Done 2026-10-16: your Postman run passed all 23 rows.** Built 2026-10-15, code and tests written by Claude at your request, in the build order. Suite **136 tests, 0 failures, 18.6 s, 2 containers**; 15 of 15 mutations caught; deliberate failures 1–5 observed (results at the end of §3.1). Two gaps found and fixed: a commit-time violation's 409 had no constraint name (`CommonErrorUtility`); a plain `OPTIONS` on an org path was a 500 (review finding, 2026-10-16: the gate now gates only `@Controller` methods). |
-| **§3.2** | **Built 2026-10-18.** You started it (request records, error codes, re-authentication extracted, change role) and fixed the review's two must-fix items; Claude, at your request, applied the rest of the review and built remove, leave and transfer, plus all of §3.2's tests. Suite **223 tests, 0 failures, 23.2 s, 2 containers**; 15 of 15 mutations caught (after one test was strengthened); deliberate failures 1–5 observed. Details at the end of §3.2. |
-| **Next** | 1. **Read §3.2's code and tests**, then run the §3.2 Postman steps (alice, adam, mia). 2. Commit §3.2 (staged by name). 3. Your 15-minute Phase 1 and Phase 2 notes. 4. **§3.3** (invitations, V8). |
+| **§3.2** | ✅ **Done 2026-10-20: your Postman run passed (\"everything works\"), committed `ea7b9fb`.** **Built 2026-10-18.** You started it (request records, error codes, re-authentication extracted, change role) and fixed the review's two must-fix items; Claude, at your request, applied the rest of the review and built remove, leave and transfer, plus all of §3.2's tests. Suite **223 tests, 0 failures, 23.2 s, 2 containers**; 15 of 15 mutations caught (after one test was strengthened); deliberate failures 1–5 observed. Details at the end of §3.2. |
+| **Next** | 1. Commit §3.2's wrap-up docs. 2. **§3.3** in its build order (brief re-checked 2026-10-20: six gaps closed: request records and codes, `:now` from the `Clock`, properties registration, decline's `WHERE`, concurrent re-invites, the `ALREADY_MEMBER` email oracle). 3. Your 15-minute Phase 1 and Phase 2 notes. |
 | **Decisions to raise** | None open. D1–D8 all decided 2026-10-13 (the recommendations), so V7–V9 stand as written. OpenAPI moved to Phase 11 (the proposal, taken with the recommendations). |
 | **Debt** | Test debt: **Tier 1 paid** (§3.0); Tier 2 → Phase 11 (list in §3.0 *Out*). Phase 2's `prod`-without-key done-item: **proven** (`JwtKeyConfigTest`). README → §3.5. Nits: *Carried in*. |
 | **Environment state** | Dev DB at **V7** (applied 2026-10-16 by your app start; backfill: `demo-org9` → alice, `demo-org98` → `abhinavvgargg-jwt`; the 4 `system` organizations stay ownerless and unreachable). Your Postman run may have left `p31…` users and organizations (cleanup SQL at the end of §3.1 *Run it*). The dev signing key is ephemeral. |
@@ -983,7 +983,7 @@ Why the race test accepts 409 **or** 403 for the loser: if both requests pass th
 
 **Mutation 13 survived the first run.** My "member of another organization" was Globex's **owner**, whom step 2's `role <> 'OWNER'` excludes anyway, so removing the organization from the `WHERE` changed nothing visible. The case that matters is a **plain member** of another organization (`gil`, `carol` in the slice): with the mutation, Acme's transfer tried to make gil the owner of **Globex**, and only Globex's one-owner index stopped it (409 instead of 404). Both tests now include a plain member, and the mutation is caught.
 
-**Not proven yet:** your Postman run.
+**Your run (reported 2026-10-20): "everything works".** The steps were your own (no §3.2 *Run it* was ever written into this doc); no row-by-row results were recorded, and the dev database keeps no trace of the run (only the three owner rows remain, none ever changed). The automated suite carries the detailed proof (the 22-row matrix, the transfer race).
 
 ### Re-review 2026-10-18 (read only, nothing run): no must-fix
 
@@ -1117,6 +1117,12 @@ create index ix_organization_invitations_open_email
 #### Configuration
 
 - [ ] `taskflow.organizations.invitation-ttl` (typed, positive, `7d` in `application.yml`), validated at startup.
+- [ ] The properties record is added to `TaskflowApplication`'s `@EnableConfigurationProperties({...})` list (properties are registered by name here, not scanned; a missing entry fails startup with "no qualifying bean"). *(Added 2026-10-20.)*
+
+#### Request records and error codes (`organization.invitation`) *(added 2026-10-20 at §3.3's start; my brief left them implicit)*
+
+- [ ] `InviteRequest(email, role)`: `@NotBlank @Email @Size(max = 254) String email` (registration's rules) and `@NotNull @Pattern(regexp = "ADMIN|MEMBER") String role` (§3.2's lesson: a `String`, so `OWNER`, `GOD` and `admin` all get 400 `VALIDATION_FAILED` with the field).
+- [ ] New codes: `INVITATION_NOT_FOUND` (404), `ALREADY_MEMBER` (409), `ROLE_NOT_GRANTABLE` (403), in one `InvitationErrorCode` (or `OrganizationErrorCode`; one home per code).
 
 #### `OrganizationInvitation` (entity, `organization.invitation`)
 
@@ -1131,7 +1137,8 @@ create index ix_organization_invitations_open_email
 - [ ] `revoke(invitationId)`: a conditional update with the organization in the `WHERE`; 0 rows → 404 `INVITATION_NOT_FOUND`.
 - [ ] `listMine(caller, pageable)` returns open, unexpired invitations addressed to the caller's current email, with the organization's name.
 - [ ] `accept(caller, invitationId)`: the conditional update (email and expiry in the `WHERE`), then the membership insert, in one transaction; 0 rows → 404 `INVITATION_NOT_FOUND`; already a member → 409 `ALREADY_MEMBER`.
-- [ ] `decline(caller, invitationId)`: a conditional update; 0 rows → 404.
+- [ ] `decline(caller, invitationId)`: a conditional update with the same `WHERE` as accept (id, the caller's email, open, unexpired); 0 rows → 404.
+- [ ] Every "not expired" condition compares with a `:now` parameter from the injected `Clock`, never SQL `now()` / `current_timestamp`.
 - [ ] Every conditional update sets `updated_at` and `updated_by`.
 
 **Done when:** alice invites `bob@…` as MEMBER; bob lists it, accepts → 200 `{organizationId, role: MEMBER}`; bob's `GET /organizations/{Acme}` → 200; accepting again → 404.
@@ -1155,6 +1162,10 @@ create index ix_organization_invitations_open_email
 - **The bearer principal has no email** (Phase 2: no PII in tokens): load it by id (`findEmailById`) for "my invitations", accept and decline.
 - **Expiry in the index predicate** is impossible (`now()` isn't immutable): that's why re-invite revokes first, and why every read filters `expires_at > now`.
 - **Accept's two steps must be one transaction**: an accepted invitation with no membership (or the reverse) is a state nobody can fix from the API.
+- **SQL `now()` in a query** ignores the application's clock: the `AdjustableClock` can't move it, so "expired invitations can't be accepted" becomes untestable without waiting 7 days. Pass `:now` from the injected `Clock`, as every Phase 2 query does. *(Added 2026-10-20.)*
+- **Moving the clock 7 days kills every access token obtained before** (15 minutes): in an expiry test, log in again after `advance`.
+- **Two concurrent re-invites of the same email**: both revoke (the second waits for the first's row lock, then finds the old row already revoked), but the second's `UPDATE` can't see the row the first just inserted (it's newer than the statement's snapshot, PostgreSQL READ COMMITTED), so its `INSERT` hits `uk_organization_invitations_open` → 409 `RESOURCE_CONFLICT` naming the index (*inferred from PostgreSQL's documented behaviour, not run*). Correct outcome (one open invitation), generic answer: acceptable, or map that constraint name to a friendlier code.
+- **`409 ALREADY_MEMBER` is an email oracle for admins** *(accepted trade-off, added 2026-10-20)*: an owner or admin can type a guessed address and learn whether it belongs to a member, which the members list deliberately hides. Accepted: only managers of that organization can ask, about their own organization. The alternative (create the invitation anyway, refuse at accept) leaves a pointless open invitation and confuses the inviter.
 - **The "already a member" check isn't enough alone**: two accepts racing for two different invitations of the same person can't happen (one open invitation per email and organization), but the unique constraint stays the guard.
 - **`/users/me/invitations` must not go through the gate**: it's under `/users`, not `/organizations`, on purpose (no tenant exists until you accept).
 
@@ -1170,7 +1181,8 @@ create index ix_organization_invitations_open_email
 
 ### Build order
 
-1. V8, configuration, entity.
+0. **Before any code:** commit §3.2's wrap-up docs (five files, listed in the last wrap-up).
+1. V8, configuration (registered in `@EnableConfigurationProperties`), entity, request records and error codes.
 2. Invite (organization side), list, revoke. → *Deliberate failures 2, 3, 5.*
 3. My invitations, accept, decline. → *Deliberate failures 1, 4.*
 
@@ -1181,6 +1193,125 @@ create index ix_organization_invitations_open_email
 | JPA slice | Conditional accept: wrong email 0, right 1, again 0, expired 0 (clock) · one open invitation per (organization, email) |
 | Integration | Invite → list mine → accept → member · accept someone else's → 404 identical to a random id's · expired → not listed, accept 404 (clock) · re-invite replaces · already member → 409 · admin invites ADMIN → 403 · member invites → 403 · revoke → can't accept · organization side of B with A's invitation id → 404 |
 | Integration (parallel) | 10 accepts of one invitation → exactly one 200, one membership |
+
+### Run it (Postman; written 2026-11-04)
+
+**0. Start the app** (IntelliJ, `dev`), then in the Database tool window (**Auto-commit**): `select max(version) from flyway_schema_history;` → **8**.
+
+**1. Postman setup**: collection *TaskFlow 3.3*. Variables: `base` = `http://localhost:8080`, `password` = `p33-password-123`; empty: `aliceToken`, `adamToken`, `miaToken`, `bobToken`, `acmeId`, `globexId`, `adamInvId`, `miaInvId`, `zoeInvId`, `carolInvId`, `bobInvId`, `notFoundBody`. Each request: Auth → Bearer Token `{{…Token}}`.
+
+**2. Users** (once): `POST {{base}}/api/v1/auth/register` `{"email":"p33alice@example.com","username":"p33alice","displayName":"P33 Alice","password":"{{password}}"}`, and the same for `p33adam`, `p33mia`, `p33bob` → **201** each. Then:
+
+```sql
+update user_accounts set email_verified_at = now() where username in ('p33alice','p33adam','p33mia','p33bob');   -- 4 rows
+```
+
+`POST {{base}}/api/v1/auth/login` for each; Post-response: `pm.collectionVariables.set("aliceToken", pm.response.json().accessToken);` (`adamToken`, `miaToken`, `bobToken`). Tokens live 15 minutes: re-login on 401 `INVALID_ACCESS_TOKEN`.
+
+**3. Organizations**
+
+| # | As | Request | Expected |
+|---|---|---|---|
+| 1 | alice | `POST /api/v1/organizations` `{"name":"P33 Acme","slug":"p33-acme"}`; script `pm.collectionVariables.set("acmeId", pm.response.json().id);` | **201** `OWNER` |
+| 2 | bob | `POST /api/v1/organizations` `{"name":"P33 Globex","slug":"p33-globex"}`; save `globexId` | **201** |
+
+**4. Inviting (organization side)**: `POST /api/v1/organizations/{{acmeId}}/invitations`; save each `id` with `pm.collectionVariables.set("adamInvId", pm.response.json().id);` etc.
+
+| # | As | Body | Expected | Proves |
+|---|---|---|---|---|
+| 3 | alice | `{"email":"p33adam@example.com","role":"ADMIN"}` → `adamInvId` | **201** `role: ADMIN`, `invitedBy: p33alice`, `expiresAt` ≈ now + 7 days, `Location: …/invitations/{id}` | The owner can invite an admin |
+| 4 | alice | `{"email":"  P33Mia@Example.COM ","role":"MEMBER"}` → `miaInvId` | **201**, `email: "p33mia@example.com"` | Normalised before storing *(if `@Email` refuses the spaces, send `P33Mia@Example.COM` without them: same result)* |
+| 5 | alice | `{"email":"zoe@example.com","role":"MEMBER"}` → `zoeInvId` | **201** | No account needed to be invited |
+| 6 | alice | `{"email":"x@example.com","role":"OWNER"}`, then `"role":"admin"`, then `"role":"GOD"` | **400** `VALIDATION_FAILED`, `fieldErrors[0].field: role`, all three | Role validated as a string |
+| 7 | alice | `{"email":"not-an-email","role":"MEMBER"}` | **400** `VALIDATION_FAILED`, field `email` | |
+| 8 | alice | `{"email":"p33alice@example.com","role":"MEMBER"}` | **409** `ALREADY_MEMBER` | The accepted email oracle (members only) |
+| 9 | alice | `GET /api/v1/organizations/{{acmeId}}/invitations` | **200**: zoe, mia, adam (newest first), each with `email`, `role`, `invitedBy`, `expiresAt` | Admins see open invitations |
+| 10 | alice | re-invite `{"email":"zoe@example.com","role":"ADMIN"}` → overwrite `zoeInvId` | **201**, a **new** id; row 9's list now shows zoe **once**, as `ADMIN` | Re-invite replaces the open one |
+
+```sql
+-- after row 10: the old zoe invitation is revoked, the new one open
+select id, role, revoked_at is not null as revoked, updated_by from organization_invitations where email = 'zoe@example.com' order by id;
+-- expected: (old id, MEMBER, true, p33alice) and (new id, ADMIN, false, p33alice)
+```
+
+**5. Accepting (invitee side)**: under `/api/v1/users/me/invitations` (no organization in the URL)
+
+| # | As | Request | Expected | Proves |
+|---|---|---|---|---|
+| 11 | adam | `GET /api/v1/users/me/invitations` | **200**, one: `organizationName: "P33 Acme"`, `role: ADMIN`, `invitedBy: p33alice`, **no `email`** | Matched by the caller's email |
+| 12 | bob | `GET /api/v1/users/me/invitations` | **200**, empty | |
+| 13 | bob | `POST /api/v1/users/me/invitations/{{adamInvId}}/accept`; script: `const b = pm.response.json(); ["timestamp","correlationId","instance"].forEach(k => delete b[k]); pm.collectionVariables.set("notFoundBody", JSON.stringify(b));` | **404** `INVITATION_NOT_FOUND`, `detail: "Invitation not found"` | Someone else's invitation |
+| 14 | bob | `POST /api/v1/users/me/invitations/999999999/accept`; script: the same strip, then `pm.test("same as someone else's", () => pm.expect(JSON.stringify(b)).to.eql(pm.collectionVariables.get("notFoundBody")));` | **404**, test passes | No oracle |
+| 15 | adam | `POST …/{{adamInvId}}/accept` | **200** `{organizationId: acmeId, role: ADMIN}` | |
+| 16 | adam | the same again | **404** | Single use |
+| 17 | adam | `GET /api/v1/organizations/{{acmeId}}` (same token) | **200** `role: ADMIN` | Membership read per request |
+| 18 | mia | `GET /api/v1/users/me/invitations`, then `POST …/{{miaInvId}}/accept` | the invitation; **200** `MEMBER` | The normalised address matched |
+| 19 | alice | `GET /api/v1/organizations/{{acmeId}}/members` | p33adam `ADMIN`, p33alice `OWNER`, p33mia `MEMBER` (username order) | Accept created the memberships |
+
+**6. Who may invite**
+
+| # | As | Request | Expected |
+|---|---|---|---|
+| 20 | adam | invite `{"email":"carol@example.com","role":"ADMIN"}` | **403** `ROLE_NOT_GRANTABLE` (an admin can't create a peer) |
+| 21 | adam | invite `{"email":"carol@example.com","role":"MEMBER"}` → `carolInvId` | **201**, `invitedBy: p33adam` |
+| 22 | adam | `GET …/{{acmeId}}/invitations` | **200** (admins list) |
+| 23 | mia | `GET …/{{acmeId}}/invitations`, then invite anyone | **403** `ORGANIZATION_ROLE_REQUIRED` both |
+| 24 | bob | `GET /api/v1/organizations/{{acmeId}}/invitations` | **404** `ORGANIZATION_NOT_FOUND` (the gate) |
+| 25 | alice | invite `{"email":"p33mia@example.com","role":"MEMBER"}` | **409** `ALREADY_MEMBER` (mia joined) |
+
+**7. Revoke, decline, expiry**
+
+| # | As | Request | Expected | Proves |
+|---|---|---|---|---|
+| 26 | alice | `DELETE /api/v1/organizations/{{acmeId}}/invitations/{{carolInvId}}` | **204** | Admins and owners revoke |
+| 27 | alice | the same again | **404** `INVITATION_NOT_FOUND` | Only open ones |
+| 28 | bob | `DELETE /api/v1/organizations/{{globexId}}/invitations/{{zoeInvId}}` | **404** | Another organization's invitation through your own |
+| 29 | alice | invite `{"email":"p33bob@example.com","role":"MEMBER"}` → `bobInvId` | **201** | |
+| 30 | bob | `GET /api/v1/users/me/invitations` → one; `POST …/{{bobInvId}}/decline` | **204** | |
+| 31 | bob | `POST …/{{bobInvId}}/accept` | **404** | Declined is answered |
+| 32 | alice | invite p33bob again (row 29's body) → `bobInvId` | **201** (a declined invitation frees the slot) | |
+| 33 | — | SQL (below): make bob's open invitation expired | 1 row | |
+| 34 | bob | `GET /api/v1/users/me/invitations`, then `POST …/{{bobInvId}}/accept` | empty list; **404** | Expired can't be seen or accepted |
+| 35 | alice | invite p33bob again → `bobInvId` | **201**, and the expired one is now `revoked` (SQL from row 10, for bob) | Re-invite frees an expired-but-open slot |
+
+```sql
+-- 33: expire bob's open invitation (keeps CHECK expires_at > created_at)
+update organization_invitations set created_at = now() - interval '8 days', expires_at = now() - interval '1 day'
+ where email = 'p33bob@example.com' and accepted_at is null and declined_at is null and revoked_at is null;
+```
+
+**8. Two accepts at once** (terminal; Postman's runner is sequential). Use row 35's `bobInvId` and bob's token:
+
+```bash
+T='<bobToken>'; U="http://localhost:8080/api/v1/users/me/invitations/<bobInvId>/accept"; for i in 1 2; do curl -s -o /dev/null -w "%{http_code}\n" -X POST -H "Authorization: Bearer $T" "$U" & done; wait
+```
+
+Expected: one `200` and one `404` (either order). Then `select count(*) from organization_memberships m join user_accounts u on u.id = m.user_account_id where u.username = 'p33bob' and m.organization_id = <acmeId>;` → **1**.
+
+**9. The database rules** (Auto-commit; replace 456 with `{{acmeId}}`)
+
+| # | SQL | Expected |
+|---|---|---|
+| 36 | `insert into organization_invitations (id, organization_id, email, role, expires_at, created_at, updated_at) values (nextval('global_id_seq'), 456, 'dup@example.com', 'MEMBER', now() + interval '7 days', now(), now());` run **twice** | second: `uk_organization_invitations_open` |
+| 37 | `update organization_invitations set role = 'OWNER' where email = 'dup@example.com';` | `ck_organization_invitations_role` |
+| 38 | `update organization_invitations set accepted_at = now(), declined_at = now() where email = 'dup@example.com';` | `ck_organization_invitations_single_outcome` |
+| 39 | `insert … 'Dup2@Example.com' …` (as 36) | `ck_organization_invitations_email_lowercase` |
+
+**10. Report back**: rows that differed (status and body), the two `curl` statuses, and whether the console showed the gate query on org-side requests and the email lookup (`select … email from user_accounts`) on invitee-side ones.
+
+**Clean up afterwards (optional):** `delete from organizations where slug in ('p33-acme','p33-globex');` (invitations and memberships cascade), then `delete from user_accounts where username like 'p33%';`.
+
+### Review 2026-11-04 (read only, nothing run): no must-fix
+
+V8 is byte-identical to the verified SQL. Checked and right: both sides' keys in every `WHERE` (organization from `TenantContext`; the caller's current email, loaded by id); every write a conditional `UPDATE` with "open" spelled like the index predicate and "unexpired" as `:now` from the `Clock`; `invite`'s order (ADMIN → `mayInvite` → `ALREADY_MEMBER` → revoke-then-insert with one clock reading); `accept` as one transaction (claim with the row lock → read the immutable grant → already-member 409 rolls the claim back → insert); the 404 with a constant detail for every miss; `role` validated as a `String`; `InvitationProperties` registered; the invitee side under `/users/me` (no gate); no email in `toString()` or in the invitee's view.
+
+**Should fix / decide**
+1. **Tests: none yet for §3.3** (yours to write, unless you ask me): the list under *Tests* above, plus `OrganizationRole.mayInvite`'s table.
+2. **Audit timestamps ignore the injected `Clock`** *(verified 2026-11-04 in the spring-data-commons 3.5.13 bytecode: `@EnableJpaAuditing` without `dateTimeProviderRef` uses `CurrentDateTimeProvider`, i.e. `LocalDateTime.now()`)*. Here, `created_at` is system time while `expires_at` (and every `updated_at` the conditional statements set) is `Clock` time. Identical in production; in tests the `AdjustableClock` moves one and not the other, and V8's `CHECK (expires_at > created_at)` ties them: a clock behind system time (a negative `advance`, a future clock bean) would make a valid invite fail the `CHECK`. Project-wide fix, one line of configuration: `@EnableJpaAuditing(dateTimeProviderRef = …)` with a `DateTimeProvider` bean reading the `Clock` (then every `BaseEntity` follows the same time). *Also corrects §3.0's claim that every time reader uses the adjustable clock: auditing never did.* Your call: fix now (recommended, before §3.4 adds more audited tables) or record it as known. **Decided 2026-11-04: recorded as known** (your call; not the recommendation). Cost accepted: in tests, audit `created_at`/`updated_at` from entity saves follow system time while the conditional statements and expiry follow the `Clock`; never move the `AdjustableClock` backwards.
+
+**Nits**
+- Parameter order differs between sides: `invite(email, role, caller)` vs `accept(caller, invitationId)`.
+- *Design note (interview-worthy, not a bug):* an invitation is authorized when it's **sent**, not when it's accepted. An owner's ADMIN invitation stays valid after that owner transfers ownership; the new owner can revoke it. Checking again at accept time would need the inviter's current role, and the inviter may have left.
 
 ---
 
@@ -1498,7 +1629,7 @@ And the positive pair for each: bob gets 200/201/204 on his own.
 - [x] Creating an organization makes the caller its owner; nothing can commit an organization without exactly one owner. (§3.1: tests + your run, rows 1 and 20–22, 2026-10-16)
 - [x] `GET /organizations` lists only the caller's organizations. (§3.1: tests + your run, rows 4–5)
 - [x] Every org-scoped request passes the gate; non-members get the same 404 as for a non-existent organization. (§3.1: tests + your run, rows 7–9, 11, 16)
-- [ ] D6's matrix holds for all three roles; transfer requires the password and swaps roles atomically.
+- [x] D6's matrix holds for all three roles; transfer requires the password and swaps roles atomically. (§3.2: the 22-row integration matrix, the 18 + 9 rule tables, the transfer race; your run 2026-10-20)
 - [ ] Invitations: invite, list, revoke, my invitations, accept, decline; another user's invitation id → 404; expired ones can't be accepted.
 - [ ] Projects: unique key per organization; another tenant's project id → 404 through `findById`.
 - [ ] The isolation matrix passes and every mutation above turns it red.
@@ -1506,7 +1637,7 @@ And the positive pair for each: bob gets 200/201/204 on his own.
 - [ ] (Side task) Profile GET/PATCH; README current.
 - [x] Existing organization tests migrated, not disabled; cleanup deletes organizations before users. (§3.1)
 - [ ] `PROJECT_CONTEXT.md` §2.1 (invitations, per D7) and §5 (Phase 3/4 rows, per D8) match what was built.
-- [ ] Learning log and implementation reference created for Phase 3; small commits, one per sub-section, staged by file name. *(Learning log since 2026-10-13, implementation reference since 2026-10-16; commits: §3.0 `ec5acad`, §3.1 pending.)*
+- [ ] Learning log and implementation reference created for Phase 3; small commits, one per sub-section, staged by file name. *(Learning log since 2026-10-13, implementation reference since 2026-10-16; commits: §3.0 `ec5acad`, §3.1 `45c17b1`, §3.2 `ea7b9fb`.)*
 
 ---
 

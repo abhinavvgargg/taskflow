@@ -2,7 +2,7 @@
 
 > Organised by **theme**, not by sub-section (rule since 2026-10-01). Sub-section detail (briefs, requirements, per-step deliberate failures, test plans) lives in `PHASE_3_REQUIREMENTS.md`.
 > Companions: `../phase-2/PHASE_2_LEARNING_LOG.md` (its §8 is the backlog this phase started from) · `../phase-1/SECURITY_TESTING_GUIDE.md` §8 (the test tools added in §3.0).
-> **Covers so far:** §3.0 Tier-1 test debt (2026-10-13); §3.1 memberships and the tenant gate (built 2026-10-15, code and tests written by Claude at your request; `OPTIONS` fix after review 2026-10-16; your Postman run passed 2026-10-16); §3.2 managing members (2026-10-18: you started it and fixed the review's must-fix items; I finished it and wrote its tests at your request). Decisions D1–D8 taken 2026-10-13 (all the recommendations).
+> **Covers so far:** §3.0 Tier-1 test debt (2026-10-13); §3.1 memberships and the tenant gate (built 2026-10-15, code and tests written by Claude at your request; `OPTIONS` fix after review 2026-10-16; your Postman run passed 2026-10-16); §3.2 managing members (2026-10-18: you started it and fixed the review's must-fix items; Claude finished it and wrote its tests at your request; your Postman run passed and it was committed 2026-10-20). Decisions D1–D8 taken 2026-10-13 (all the recommendations).
 
 ---
 
@@ -37,6 +37,7 @@
 | **Verified by me (2026-10-15, §3.1)** | Suite: **136 tests, 0 failures, 18.6 s wall, still 2 Postgres containers** (35 tests added or rewritten, including the 2 for the `OPTIONS` fix on 2026-10-16). **15 mutations** caught, each planted alone in a scratch copy (deleted afterwards). Deliberate failures 1–5 observed in the scratch copy: results in `PHASE_3_REQUIREMENTS.md` §3.1. Read in sources: Spring Data JPA 3.5.13 qualifies a sort property with the root alias unless it starts with a join variable (`HqlSortedQueryTransformer.visitJoinPath`, `JpaQueryTransformerSupport.shouldPrefixWithAlias`); `@DataJpaTest` includes `JdbcTemplateAutoConfiguration`; Hibernate 6.6.53's PostgreSQL constraint-name extractor works from SQLState + message. spring-webmvc 6.2.19 answers an unmapped `OPTIONS` with its own `HandlerMethod` from `handleNoMatch`, with no path variables stored (`handleMatch` stores them, and it doesn't run). Your dev database was **not** touched: it is still at V6 until you start the app. |
 | **Verified for the brief (2026-10-13)** | V7–V9 on a scratch copy of the dev database (dropped afterwards); the Hibernate 6.6.53 and Spring 6.2.19 behaviour listed in the brief's D4 and §3.1. |
 | **Reported by you (2026-10-16, §3.1)** | Your Postman + SQL run: **all 23 rows passed as expected** (V7 applied with the expected backfill; create → `OWNER`; "mine" only; the non-member 404 identical to a non-existent id's and to `/abc`, checked by a Postman test script; members without email; sorts and their 400s; carol's removal → 404 on her next request with the same token; `OPTIONS` → 200 with `Allow` for member and non-member alike; 401 without a token; the four database invariants refused by name). The console's "one gate query per request" check wasn't reported separately. |
+| **Reported by you (2026-10-20, §3.2)** | Your Postman run: "everything works". The requests were your own (no §3.2 steps were written into the requirements) and no row-by-row results were recorded; the dev database keeps no trace of it. The detailed proof is the automated suite. |
 | **Not proven** | Tier-2 rules (wrong `aud`, `alg: none`, CORS rows, registration races, claim contents): still manual-only. |
 
 ---
@@ -234,10 +235,11 @@ rsync -a --exclude target --exclude .git --exclude .idea ./ /tmp/tf-mut/ && cd /
 ## 8. Debt and what's next
 
 - **Tier-2 tests** (Phase 11): §1.3 registration (duplicate 409 under a race, password never echoed), §1.4 verification details, §2.1 claim contents, cookie attributes and `no-store`, §2.2 `alg: none` / wrong key / **wrong `aud`** / converter rejections / the expiry boundary, §2.5 `CorsProperties` and the preflight table (needs a client that sends `Origin`: the JDK one does), Phase 0's `rejectedValue` test.
-- **Commit §3.2** (code, tests and docs, staged by name). §3.1 was committed (`45c17b1`). `AuthenticationUtil` and `ChangeRoleResponse` were removed with `git rm`, so they're out of the index already.
-- **The §3.2 Postman run** (alice owner, adam admin, mia member): not done yet.
+- *Done 2026-10-20:* §3.2 committed (`ea7b9fb`) after your Postman run.
+- **From §3.2's re-review (nits):** `MembershipService.transferOwnership` is `public` (a future caller could skip the password; package-private keeps sudo mode unskippable) · a stolen access token can lock the owner out with 5 wrong transfer passwords, as through change-password (Phase 10's rate limiting).
 - *Done 2026-10-16:* V7 applied to your dev database and the §3.1 Postman run passed (all 23 rows).
 - **Not measured yet:** the gate lookup's query plan with real row counts (the table is tiny everywhere so far).
 - *Done 2026-10-18:* §3.1's owed items (the `OPTIONS`-mapping test; the commented-out `findRoleByOrganizationIdAndUserAccountId` deleted).
-- **Next: §3.3** (invitations, V8).
+- **Known, recorded 2026-11-04 (your call):** JPA auditing ignores the injected `Clock` (`@EnableJpaAuditing` without `dateTimeProviderRef` uses `CurrentDateTimeProvider`: `LocalDateTime.now()`, verified in spring-data-commons 3.5.13). Audit `created_at`/`updated_at` from entity saves are system time; expiry and the conditional statements' `updated_at` are `Clock` time. §3.0's "every component reading time uses the adjustable clock" was wrong for auditing. Never move the `AdjustableClock` backwards (V8's `expires_at > created_at` would refuse a valid invite). Fix when wanted: a `DateTimeProvider` bean reading the `Clock`.
+- **Now: §3.3** (invitations, V8): code reviewed 2026-11-04 (no must-fix); tests not written yet; Postman steps in §3.3 *Run it*.
 - **Your 15-minute notes** for Phase 1 and Phase 2.
